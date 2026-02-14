@@ -117,36 +117,66 @@ def _stop_x_stack():
     _terminate(xvfb_proc); xvfb_proc = None
 
 
+def _run_sh(cmd: str):
+    """Run shell command synchronously (so we don't leave pkill/sleep zombies)."""
+    subprocess.run(["bash", "-lc", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _has_any_process(pattern: str) -> bool:
+    r = subprocess.run(
+        ["bash", "-lc", f"pgrep -fa {json.dumps(pattern)} >/dev/null 2>&1"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return r.returncode == 0
+
+
 def _kill_chrome_family_hard():
     """
-    Aggressive Chrome cleanup:
-    - undetected_chromedriver processes
-    - chromedriver
-    - chrome + crashpad
+    Robust cleanup for container:
+    1) Kill anything that belongs to the Xvfb DISPLAY
+    2) Kill chrome/driver families (TERM then KILL)
+    3) Wait briefly and ensure gone
     """
-    subprocess.Popen(
-        ["bash", "-lc",
-         "pkill -TERM -f 'undetected_chromedriver' || true; "
-         "pkill -TERM -f 'chromedriver' || true; "
-         "pkill -TERM -f 'google-chrome' || true; "
-         "pkill -TERM -f '\\bchrome\\b' || true; "
-         "pkill -TERM -f 'chrome_crashpad' || true; true"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    # 1) Prefer DISPLAY-scoped kill (only affects GUI launched on :99)
+    _run_sh(
+        f"pkill -TERM -f 'DISPLAY={DISPLAY}' 2>/dev/null || true; "
+        f"pkill -TERM -f 'XDG_RUNTIME_DIR=/tmp/runtime-root' 2>/dev/null || true; true"
     )
-    subprocess.Popen(
-        ["bash", "-lc",
-         "sleep 0.6; "
-         "pkill -9 -f 'undetected_chromedriver' || true; "
-         "pkill -9 -f 'chromedriver' || true; "
-         "pkill -9 -f 'google-chrome' || true; "
-         "pkill -9 -f '\\bchrome\\b' || true; "
-         "pkill -9 -f 'chrome_crashpad' || true; true"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+
+    # 2) Standard families (TERM)
+    _run_sh(
+        "pkill -TERM -f 'undetected_chromedriver' 2>/dev/null || true; "
+        "pkill -TERM -f 'chromedriver' 2>/dev/null || true; "
+        "pkill -TERM -f 'google-chrome' 2>/dev/null || true; "
+        "pkill -TERM -f 'chrome_crashpad' 2>/dev/null || true; "
+        "pkill -TERM -f '\\bchrome\\b' 2>/dev/null || true; true"
     )
+
+    time.sleep(0.4)
+
+    # (KILL)
+    _run_sh(
+        f"pkill -KILL -f 'DISPLAY={DISPLAY}' 2>/dev/null || true; "
+        "pkill -KILL -f 'undetected_chromedriver' 2>/dev/null || true; "
+        "pkill -KILL -f 'chromedriver' 2>/dev/null || true; "
+        "pkill -KILL -f 'google-chrome' 2>/dev/null || true; "
+        "pkill -KILL -f 'chrome_crashpad' 2>/dev/null || true; "
+        "pkill -KILL -f '\\bchrome\\b' 2>/dev/null || true; true"
+    )
+
+    # 3) Verify a short moment
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        if not (
+            _has_any_process("undetected") or
+            _has_any_process("chromedriver") or
+            _has_any_process("google-chrome") or
+            _has_any_process("chrome_crashpad") or
+            _has_any_process(" chrome")
+        ):
+            return
+        time.sleep(0.15)
 
 
 def _schedule_cleanup_after_done_if_success(marker: dict | None):
@@ -166,7 +196,7 @@ def _schedule_cleanup_after_done_if_success(marker: dict | None):
     def _job():
         time.sleep(1.0)  # avoid UI flash
         try:
-            _log("[cleanup] killing chrome...")
+            _log("[cleanup] killing chrome (sync)...")
             _kill_chrome_family_hard()
         except Exception:
             pass
@@ -185,7 +215,6 @@ def _iframe_url():
 
 
 def _ensure_runtime_env():
-    # Environment for GUI apps / selenium
     os.environ["DISPLAY"] = DISPLAY
     os.environ.setdefault("HOME", "/tmp")
     os.environ.setdefault("XDG_RUNTIME_DIR", "/tmp/runtime-root")
@@ -193,7 +222,6 @@ def _ensure_runtime_env():
     os.environ.setdefault("CHROME_BIN", "/usr/bin/google-chrome")
     os.environ.setdefault("NO_AT_BRIDGE", "1")
 
-    # Ensure runtime dir exists (Chrome can be picky)
     try:
         Path(os.environ["XDG_RUNTIME_DIR"]).mkdir(parents=True, exist_ok=True)
         os.chmod(os.environ["XDG_RUNTIME_DIR"], 0o700)
@@ -202,16 +230,8 @@ def _ensure_runtime_env():
 
 
 def _ensure_auth_persisted_like_start_sh():
-    """
-    Reproduces the old working behavior (start.sh):
-      - ensure /data/Auth exists
-      - if /data/Auth is empty, copy /app/Auth/* into it
-      - symlink /app/Auth -> /data/Auth
-    This ensures Auth/token_cache.py writes secrets.json into /data/Auth.
-    """
     DATA_AUTH_DIR.mkdir(parents=True, exist_ok=True)
 
-    # If /data/Auth empty, copy initial python files from /app/Auth
     try:
         is_empty = not any(DATA_AUTH_DIR.iterdir())
     except Exception:
@@ -226,7 +246,6 @@ def _ensure_auth_persisted_like_start_sh():
             else:
                 shutil.copy2(item, dst)
 
-    # Replace /app/Auth by symlink to /data/Auth
     try:
         if AUTH_DIR.is_symlink() or AUTH_DIR.resolve() == DATA_AUTH_DIR.resolve():
             return
@@ -260,7 +279,6 @@ def _ensure_x_started():
         )
         time.sleep(0.8)
 
-    # Minimal WM (no panel): openbox
     if not (wm_proc and wm_proc.poll() is None):
         _log("[x] starting openbox")
         wm_proc = subprocess.Popen(
@@ -275,15 +293,8 @@ def _ensure_x_started():
     if not (vnc_proc and vnc_proc.poll() is None):
         _log("[vnc] starting x11vnc")
         vnc_proc = subprocess.Popen(
-            [
-                "x11vnc",
-                "-display", DISPLAY,
-                "-nopw",
-                "-forever",
-                "-shared",
-                "-rfbport", str(VNC_PORT),
-                "-noxdamage",
-            ],
+            ["x11vnc", "-display", DISPLAY, "-nopw", "-forever", "-shared",
+             "-rfbport", str(VNC_PORT), "-noxdamage"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -293,12 +304,7 @@ def _ensure_x_started():
     if not (ws_proc and ws_proc.poll() is None):
         _log("[novnc] starting websockify")
         ws_proc = subprocess.Popen(
-            [
-                "websockify",
-                "--web=/usr/share/novnc",
-                str(NOVNC_PORT),
-                f"127.0.0.1:{VNC_PORT}",
-            ],
+            ["websockify", "--web=/usr/share/novnc", str(NOVNC_PORT), f"127.0.0.1:{VNC_PORT}"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -315,16 +321,11 @@ def _ensure_x_started():
 
 
 def _force_regen():
-    """
-    Regenerate even if exists (delete persistent secrets file).
-    """
     try:
         if SECRETS_FILE.exists():
             SECRETS_FILE.unlink()
     except Exception:
         pass
-
-    # Also remove in Auth dir (which should be /data/Auth after symlink)
     try:
         p = DATA_AUTH_DIR / "secrets.json"
         if p.exists():
@@ -367,9 +368,6 @@ def _wait_for_secrets(timeout_s: int) -> bool:
 
 
 def _kick_chrome_into_view():
-    """
-    move+resize Chrome inside Xvfb via xdotool (best effort).
-    """
     cmd = f"""
 set -e
 export DISPLAY={DISPLAY}
@@ -399,10 +397,6 @@ exit 0
 
 
 def _auth_only_job():
-    """
-    ✅ done ONLY when secrets exist
-    ✅ calls the same underlying functions that write secrets.json via token_cache
-    """
     global auth_state, auth_started_ts
 
     success = False
@@ -420,7 +414,6 @@ def _auth_only_job():
         from Auth.adm_token_retrieval import get_adm_token
         from Auth.username_provider import get_username
 
-        # Bypass CLI "Press Enter..." prompt (auth_flow uses input)
         orig_input = builtins.input
         builtins.input = lambda *args, **kwargs: ""
 
@@ -428,7 +421,6 @@ def _auth_only_job():
             _log("[auth] get_aas_token()...")
             _ = get_aas_token()
 
-            # try to fit chrome window if it exists
             _kick_chrome_into_view()
 
             _log("[auth] get_adm_token(username)...")
@@ -519,7 +511,6 @@ def auth_status():
         except Exception:
             marker = {"success": False, "error": "Failed to parse done marker"}
 
-        # Cleanup ONLY if success (=> secrets are written)
         if auth_state != "running":
             _schedule_cleanup_after_done_if_success(marker)
 
