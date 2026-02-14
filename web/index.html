@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google Find My Tools - UI</title>
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --card: #121a2a;
+        --text: #e7eefc;
+        --muted: #a9b7d6;
+        --border: #22304a;
+        --btn: #2f6fed;
+        --btn2: #2a354c;
+        --good: #22c55e;
+        --warn: #f59e0b;
+        --bad: #ef4444;
+      }
+
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+          "Apple Color Emoji", "Segoe UI Emoji";
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      h1 {
+        font-size: 18px;
+        margin: 0;
+        font-weight: 650;
+      }
+
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--muted);
+      }
+
+      .dot.good { background: var(--good); }
+      .dot.warn { background: var(--warn); }
+      .dot.bad  { background: var(--bad); }
+
+      button {
+        cursor: pointer;
+        border: 0;
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-weight: 650;
+        color: white;
+        background: var(--btn);
+      }
+
+      button.secondary {
+        background: var(--btn2);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .hint {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .iframe-wrap {
+        margin-top: 18px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        overflow: hidden;
+        display: none;
+      }
+
+      iframe {
+        width: 100%;
+        height: 720px;
+        border: 0;
+        background: #000;
+        display: block;
+      }
+
+      .error-box {
+        margin-top: 14px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        background: rgba(239, 68, 68, 0.08);
+        color: #ffd0d0;
+        display: none;
+        white-space: pre-wrap;
+        font-size: 12px;
+      }
+
+      .lang {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      select {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 8px 10px;
+        outline: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="topbar">
+          <h1 id="title">Google Find My Tools</h1>
+          <div class="lang">
+            <span id="langLabel">Language</span>
+            <select id="langSelect">
+              <option value="en">English</option>
+              <option value="fr">Français</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div id="statusPill" class="status-pill">
+            <span id="statusDot" class="dot"></span>
+            <span id="statusText">Checking connection…</span>
+          </div>
+
+          <button id="authBtn">Authenticate</button>
+          <button id="reloadBtn" class="secondary">Refresh</button>
+        </div>
+
+        <div id="hint" class="hint"></div>
+
+        <div id="errorBox" class="error-box"></div>
+
+        <div id="iframeWrap" class="iframe-wrap">
+          <iframe id="novncFrame" title="noVNC"></iframe>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const authBtn = document.getElementById("authBtn");
+      const reloadBtn = document.getElementById("reloadBtn");
+      const statusDot = document.getElementById("statusDot");
+      const statusText = document.getElementById("statusText");
+      const iframeWrap = document.getElementById("iframeWrap");
+      const novncFrame = document.getElementById("novncFrame");
+      const errorBox = document.getElementById("errorBox");
+      const titleEl = document.getElementById("title");
+      const hintEl = document.getElementById("hint");
+      const langSelect = document.getElementById("langSelect");
+      const langLabel = document.getElementById("langLabel");
+
+      let pollingTimer = null;
+      let authStarted = false;
+
+      let I18N = null;
+      let LANG = "en";
+
+      function detectLang() {
+        const saved = localStorage.getItem("gfm_lang");
+        if (saved && (saved === "en" || saved === "fr")) return saved;
+        const nav = (navigator.language || "").toLowerCase();
+        return nav.startsWith("fr") ? "fr" : "en";
+      }
+
+      function t(key) {
+        if (!I18N) return key;
+        return (I18N[LANG] && I18N[LANG][key]) || (I18N["en"] && I18N["en"][key]) || key;
+      }
+
+      function applyI18n() {
+        document.title = `${t("title")} - UI`;
+        titleEl.textContent = t("title");
+        authBtn.textContent = t("authenticate");
+        reloadBtn.textContent = t("refresh");
+        hintEl.textContent = t("hint");
+        langLabel.textContent = t("language");
+      }
+
+      function setStatus(kind, text) {
+        statusDot.className = "dot";
+        if (kind === "good") statusDot.classList.add("good");
+        if (kind === "warn") statusDot.classList.add("warn");
+        if (kind === "bad") statusDot.classList.add("bad");
+        statusText.textContent = text;
+      }
+
+      function showError(msg) {
+        if (!msg) {
+          errorBox.style.display = "none";
+          errorBox.textContent = "";
+          return;
+        }
+        errorBox.style.display = "block";
+        errorBox.textContent = msg;
+      }
+
+      async function apiGet(url) {
+        const r = await fetch(url, { method: "GET" });
+        const t0 = await r.text();
+        let j = null;
+        try { j = JSON.parse(t0); } catch (e) { throw new Error(`Non-JSON response from ${url}: ${t0}`); }
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status} from ${url}`);
+        return j;
+      }
+
+      async function apiPost(url) {
+        const r = await fetch(url, { method: "POST" });
+        const t0 = await r.text();
+        let j = null;
+        try { j = JSON.parse(t0); } catch (e) { throw new Error(`Non-JSON response from ${url}: ${t0}`); }
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status} from ${url}`);
+        return j;
+      }
+
+      async function refreshConnection() {
+        try {
+          showError(null);
+          setStatus("warn", t("checking"));
+          const s = await apiGet("/api/connection/status");
+          if (s.connected) setStatus("good", t("connected"));
+          else setStatus("bad", t("disconnected"));
+        } catch (e) {
+          setStatus("bad", t("serverError"));
+          showError(String(e));
+        }
+      }
+
+      function stopPolling() {
+        if (pollingTimer) {
+          clearInterval(pollingTimer);
+          pollingTimer = null;
+        }
+      }
+
+      async function pollAuthStatus() {
+        try {
+          const st = await apiGet("/api/auth/status");
+
+          if (st.running) {
+            setStatus("warn", t("authenticating"));
+            return;
+          }
+
+          if (st.done) {
+            if (st.result && st.result.success) {
+              setStatus("good", t("connected"));
+              showError(null);
+              // Close iframe on success
+              iframeWrap.style.display = "none";
+              novncFrame.src = "about:blank";
+            } else {
+              setStatus("bad", t("authFailed"));
+              const errMsg = (st.result && st.result.error) ? st.result.error : "Unknown error";
+              showError(errMsg);
+              // keep iframe visible on failure (so you can see what happened)
+            }
+
+            authStarted = false;
+            stopPolling();
+            setTimeout(refreshConnection, 700);
+          }
+        } catch (e) {
+          setStatus("bad", t("serverError"));
+          showError(String(e));
+        }
+      }
+
+      function startPolling() {
+        stopPolling();
+        pollingTimer = setInterval(pollAuthStatus, 800);
+      }
+
+      async function startFlow() {
+        authBtn.disabled = true;
+        reloadBtn.disabled = true;
+        showError(null);
+
+        try {
+          setStatus("warn", t("startingVnc"));
+
+          const nv = await apiPost("/api/novnc/start");
+          if (!nv.iframe_url) throw new Error("noVNC start returned no iframe_url");
+
+          iframeWrap.style.display = "block";
+          novncFrame.src = nv.iframe_url;
+
+          // Wait for iframe load once, then start auth
+          novncFrame.onload = async () => {
+            if (authStarted) return;
+            authStarted = true;
+            novncFrame.onload = null;
+
+            try {
+              setStatus("warn", t("authenticating"));
+              await apiPost("/api/auth/start");
+              startPolling();
+            } catch (e) {
+              setStatus("bad", t("authFailed"));
+              showError(String(e));
+              authStarted = false;
+            }
+          };
+        } catch (e) {
+          setStatus("bad", t("failedToStart"));
+          showError(String(e));
+          iframeWrap.style.display = "none";
+          novncFrame.src = "about:blank";
+          authStarted = false;
+        } finally {
+          authBtn.disabled = false;
+          reloadBtn.disabled = false;
+        }
+      }
+
+      langSelect.addEventListener("change", () => {
+        LANG = langSelect.value;
+        localStorage.setItem("gfm_lang", LANG);
+        applyI18n();
+        refreshConnection();
+      });
+
+      authBtn.addEventListener("click", startFlow);
+      reloadBtn.addEventListener("click", refreshConnection);
+
+      // Boot
+      (async () => {
+        LANG = detectLang();
+        langSelect.value = LANG;
+
+        try {
+          const r = await fetch("/static/i18n.json");
+          I18N = await r.json();
+        } catch (e) {
+          I18N = null;
+        }
+
+        applyI18n();
+        refreshConnection();
+      })();
+    </script>
+  </body>
+</html>

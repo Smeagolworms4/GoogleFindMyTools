@@ -1,0 +1,32 @@
+{
+  "en": {
+    "title": "Google Find My Tools",
+    "checking": "Checking connection…",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "authenticate": "Authenticate",
+    "refresh": "Refresh",
+    "startingVnc": "Starting noVNC…",
+    "authenticating": "Authenticating…",
+    "authFailed": "Authentication failed",
+    "serverError": "Server error",
+    "failedToStart": "Failed to start",
+    "hint": "Click Authenticate to open a noVNC session and complete Google login. When authentication finishes successfully, the session will close automatically.",
+    "language": "Language"
+  },
+  "fr": {
+    "title": "Google Find My Tools",
+    "checking": "Vérification de la connexion…",
+    "connected": "Connecté",
+    "disconnected": "Déconnecté",
+    "authenticate": "S’authentifier",
+    "refresh": "Rafraîchir",
+    "startingVnc": "Démarrage de noVNC…",
+    "authenticating": "Authentification…",
+    "authFailed": "Échec de l’authentification",
+    "serverError": "Erreur serveur",
+    "failedToStart": "Échec du démarrage",
+    "hint": "Clique sur S’authentifier pour ouvrir une session noVNC et terminer la connexion Google. Quand l’authentification réussit, la session se ferme automatiquement.",
+    "language": "Langue"
+  }
+}

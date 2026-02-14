@@ -1,63 +1,50 @@
-# amd64 recommandé (Chrome + auth)
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    TZ=Europe/Paris \
-    DISPLAY=:0 \
-    VNC_PORT=5900 \
-    NOVNC_PORT=6080 \
-    VNC_PW=changeme
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Base + UI minimal + VNC/noVNC + dépendances Chrome
+# Base + X stack + noVNC + minimal WM + xdotool
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl wget gnupg git \
-    python3 python3-pip python3-venv \
-    xvfb fluxbox xterm \
-    x11vnc novnc websockify \
-    fonts-liberation fonts-dejavu-core \
-    libnss3 libxss1 libasound2t64 libgbm1 \
-    libgtk-3-0 libu2f-udev \
-    supervisor \
-  && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl wget gnupg \
+    python3 python3-venv python3-pip \
+    xvfb x11vnc \
+    novnc websockify \
+    fonts-liberation \
+    openbox \
+    xdotool \
+    && rm -rf /var/lib/apt/lists/*
 
-# Google Chrome (repo officiel)
+# Google Chrome
 RUN mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
       | gpg --dearmor -o /etc/apt/keyrings/google.gpg && \
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY . /app
 
-# Clone tools (pinne un commit si tu veux de la stabilité)
-RUN git clone https://github.com/Smeagolworms4/GoogleFindMyTools.git /app/GoogleFindMyTools
+# One venv for EVERYTHING
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-WORKDIR /app/GoogleFindMyTools
-# Dépendances utiles si certaines wheels doivent compiler
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential python3-dev libssl-dev libffi-dev pkg-config \
-  && rm -rf /var/lib/apt/lists/*
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir fastapi uvicorn httpx websockets
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Création du virtualenv comme dans le README
-RUN python3 -m venv venv
+# Runtime env
+ENV GFM_TOOLS_DIR=/app
+ENV GFM_SECRETS_PATH=/data/Auth/secrets.json
+ENV GFM_AUTH_DONE_MARKER=/data/Auth/.auth_done.json
+ENV GFM_AUTH_WAIT_SECONDS=900
 
-# Upgrade pip dans le venv
-RUN ./venv/bin/pip install --upgrade pip setuptools wheel
+# Display config
+ENV DISPLAY=:99
 
-# Install requirements dans le venv
-RUN ./venv/bin/pip install -r requirements.txt
+EXPOSE 8000
 
-# Fichiers runtime
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+RUN chmod +x /app/start.sh
 
-# Persistance (HA addon: /data ; sinon volume docker)
-VOLUME ["/data"]
-EXPOSE 6080 5900
-
-CMD ["/start.sh"]
+CMD ["/app/start.sh"]
