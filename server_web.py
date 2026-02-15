@@ -670,8 +670,9 @@ def _worker_entry(conn, job: str, tools_dir_str: str, payload: dict | None):
             _worker_restore(orig_input, orig_out, orig_err)
 
 
-def _run_isolated(job: str, payload: dict | None = None, timeout_s: int = 25):
-    ctx = mp.get_context("spawn")  # <-- clé : fresh process, fresh imports, fresh secrets
+def _run_isolated(job: str, payload: dict | None = None, timeout_s: int = 25, fresh: bool = True):
+    start_method = "spawn" if fresh else "fork"
+    ctx = mp.get_context(start_method)
     parent, child = ctx.Pipe(duplex=False)
     p = ctx.Process(target=_worker_entry, args=(child, job, str(TOOLS_DIR), payload), daemon=True)
     p.start()
@@ -865,7 +866,7 @@ def api_devices():
     if deny:
         return deny
 
-    kind, payload = _run_isolated("list_devices", timeout_s=12)
+    kind, payload = _run_isolated("list_devices", timeout_s=12, fresh=False)
 
     if kind == "ok":
         return {"ok": True, "devices": _normalize_devices((payload or {}).get("result"))}
