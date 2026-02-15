@@ -1,0 +1,30 @@
+# This is a basic workflow to help you get started with Actions
+
+name: 'Push readme to dockerhub'
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches: [ master ]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  readme:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Push readme
+        run: |
+          DOCKERHUB_REPO_NAME=$(echo ${GITHUB_REPOSITORY#*/} | tr '[:upper:]' '[:lower:]')
+          TOKEN=$(curl -s -X POST -H "Content-Type: application/json" -d '{"username": "${{ secrets.DOCKER_USERNAME }}", "password": "${{ secrets.DOCKER_PASSWORD }}"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
+          DESC=$(cat ./README.md | jq -sR .)
+          GH_DESCRIPTION=$(curl -s "https://api.github.com/repos/${GITHUB_REPOSITORY}" | jq -r .description | jq -sR .)
+          curl -s -X PATCH -H "Authorization: JWT $TOKEN" -H "Content-Type: application/json" -d "{\"full_description\": $DESC, \"description\": $GH_DESCRIPTION}" https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_USERNAME }}/$DOCKERHUB_REPO_NAME/
