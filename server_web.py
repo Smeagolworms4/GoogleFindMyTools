@@ -1,6 +1,7 @@
 import os
 import sys
 import io
+import re
 import time
 import asyncio
 import threading
@@ -13,11 +14,11 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 from collections import deque
+from typing import Optional, Any
 
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
 import httpx
 import websockets
@@ -87,6 +88,8 @@ def _log(line: str):
         return
     with log_lock:
         log_buf.append(line)
+    # utile aussi dans docker logs
+    print(line, flush=True)
 
 
 def is_port_open(port: int) -> bool:
@@ -164,6 +167,9 @@ def _kill_chrome_family_hard():
 
 
 def _schedule_cleanup_after_done_if_success(marker: dict | None):
+    """
+    IMPORTANT: on ne cleanup que si success=True.
+    """
     global cleanup_scheduled
     if not marker or not marker.get("success"):
         return
@@ -210,6 +216,14 @@ def _ensure_runtime_env():
 
 
 def _ensure_x_started():
+    """
+    Ne change rien à ton comportement d’avant :
+    - start Xvfb
+    - start openbox
+    - start x11vnc
+    - start websockify
+    - wait novnc port open
+    """
     global xvfb_proc, wm_proc, vnc_proc, ws_proc
 
     _ensure_runtime_env()
@@ -277,10 +291,11 @@ def _clear_done_marker():
             pass
 
 
-def _write_done_marker(success: bool, error: str | None):
+def _write_done_marker(success: bool, error: str | None, advanced_ok: bool | None = None):
     AUTH_DONE_MARKER.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "success": bool(success),
+        "advanced_ok": bool(advanced_ok) if advanced_ok is not None else None,
         "error": error,
         "secrets_exists": _secrets_exist(),
         "secrets_path": str(SECRETS_FILE),
@@ -299,6 +314,10 @@ def _wait_for_secrets(timeout_s: int) -> bool:
 
 
 def _kick_chrome_into_view():
+    """
+    Important : on garde ton comportement historique,
+    juste un helper pour ramener la fenêtre Chrome en plein écran dans VNC.
+    """
     cmd = f"""
 set -e
 export DISPLAY={DISPLAY}
@@ -327,10 +346,21 @@ exit 0
     )
 
 
+# =========================================================
+# FULL AUTH JOB (single iframe, but may open Chrome multiple times)
+# =========================================================
+
 def _auth_only_job():
+    """
+    Objectif :
+    - faire l’auth “base” (aas + adm) + l’auth “advanced” (spot + owner key check)
+    - NE PAS marquer success tant que l’advanced n’est pas OK
+    - rester dans la même session iframe
+    """
     global auth_state, auth_started_ts
 
     success = False
+    advanced_ok = False
     err = None
 
     try:
@@ -344,34 +374,54 @@ def _auth_only_job():
         from Auth.adm_token_retrieval import get_adm_token
         from Auth.username_provider import get_username
 
-        # auto "Enter" (avoid blocking)
+        # auto "Enter" (avoid blocking) => OUI on force enter, comme tu veux
         orig_input = builtins.input
         builtins.input = lambda *args, **kwargs: ""
 
         try:
             _log("[auth] get_aas_token()...")
             _ = get_aas_token()
-
             _kick_chrome_into_view()
 
+            username = get_username()
+
             _log("[auth] get_adm_token(username)...")
-            _ = get_adm_token(get_username())
+            _ = get_adm_token(username)
+
+            # ------- ADVANCED : spot token + owner key -------
+            _log("[auth] get_spot_token(username) (ADVANCED)...")
+            from Auth.spot_token_retrieval import get_spot_token
+            _ = get_spot_token(username)
+            _kick_chrome_into_view()
+
+            # Le vrai test “ça marchera pour add/locate” :
+            # register_esp32() dépend de get_owner_key()
+            _log("[auth] get_owner_key() (ADVANCED CHECK)...")
+            from SpotApi.GetEidInfoForE2eeDevices.get_owner_key import get_owner_key
+            _ = get_owner_key()  # ne loggue pas la clé, juste check
+            advanced_ok = True
+            _log("[auth] advanced auth OK (spot + owner key)")
+
         finally:
             builtins.input = orig_input
 
-        if _wait_for_secrets(AUTH_WAIT_SECONDS):
-            success = True
-            _log("[auth] secrets.json detected -> success")
-        else:
+        # success uniquement si secrets existent + advanced_ok
+        if not _wait_for_secrets(AUTH_WAIT_SECONDS):
             err = f"Timeout: secrets.json not created after {AUTH_WAIT_SECONDS}s"
             _log("[auth] " + err)
+        elif not advanced_ok:
+            err = "AUTH_INCOMPLETE_ADVANCED"
+            _log("[auth] " + err)
+        else:
+            success = True
+            _log("[auth] FULL auth success")
 
     except Exception:
         err = traceback.format_exc()
         _log("[auth] EXCEPTION:\n" + err)
 
     finally:
-        _write_done_marker(success=success, error=err)
+        _write_done_marker(success=success, error=err, advanced_ok=advanced_ok)
         auth_state = "idle"
         auth_started_ts = None
         _log("[auth] done marker written")
@@ -401,28 +451,14 @@ def _require_auth():
 
 
 # =========================================================
-# Devices models
+# Devices helpers
 # =========================================================
-
-class CustomDeviceCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=64)
-    manufacturer: str = Field(default="GoogleFindMyTools", max_length=64)
-    model: str = Field(default="Custom Tracker", max_length=64)
-    image_url: str | None = None
-    fast_pair_model_id: str | None = None
-    rotation_exponent: int = 10
-
 
 def _normalize_devices(devices_any):
     """
     Always returns a LIST of:
       { id, name, type, raw }
-
-    Handles:
-    - dict device
-    - tuple/list ("name","id", ...)
-    - string tuple "('name','id')"
-    - dict-of-devices
+    Handles tuples, dicts, string-tuples etc.
     """
     out = []
     if devices_any is None:
@@ -487,7 +523,7 @@ _AUTH_ABORT_PATTERNS = [
     ("press enter to continue", "PRESS_ENTER"),
     ("this script will now open google chrome", "OPEN_CHROME"),
     ("phone_registration_error", "PHONE_REGISTRATION_ERROR"),
-    ("gcm register request attempt", "GCM_REGISTER_FAILED"),  # matched with "has failed"
+    ("gcm register request attempt", "GCM_REGISTER_FAILED"),  # + "has failed"
 ]
 
 
@@ -509,19 +545,41 @@ def _detect_reauth_line(line: str) -> str | None:
     return None
 
 
-class _AbortOnAuthText(io.TextIOBase):
-    """Capture stdout/stderr in worker; abort if repo goes interactive/auth required."""
+class _CaptureAndAbort(io.TextIOBase):
+    """
+    Capture stdout/stderr in worker and abort if repo goes interactive/auth required.
+    Also stores output so we can parse "Advertisement Key".
+    """
+    def __init__(self, max_chars: int = 24000):
+        super().__init__()
+        self._max = max_chars
+        self._buf: list[str] = []
+        self._size = 0
+
     def write(self, s):
         if not s:
             return 0
-        for line in str(s).splitlines():
+
+        text = str(s)
+        for line in text.splitlines():
             reason = _detect_reauth_line(line)
             if reason:
                 raise KeyboardInterrupt(reason)
-        return len(s)
+
+            if line:
+                self._buf.append(line)
+                self._size += len(line) + 1
+                while self._size > self._max and self._buf:
+                    dropped = self._buf.pop(0)
+                    self._size -= len(dropped) + 1
+
+        return len(text)
 
     def flush(self):
         return
+
+    def get_text(self) -> str:
+        return "\n".join(self._buf)
 
 
 def _worker_bootstrap(tools_dir_str: str):
@@ -536,11 +594,11 @@ def _worker_bootstrap(tools_dir_str: str):
     builtins.input = lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt("INPUT_BLOCKED"))
 
     # capture stdout/stderr to detect auth prompts
-    cap = _AbortOnAuthText()
+    cap = _CaptureAndAbort()
     orig_out, orig_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = cap, cap
 
-    return (orig_input, orig_out, orig_err)
+    return orig_input, orig_out, orig_err, cap
 
 
 def _worker_restore(orig_input, orig_out, orig_err):
@@ -559,61 +617,62 @@ def _job_list_devices():
     return get_canonic_ids(devices_decoded)
 
 
-def _job_create_custom(body_dict: dict):
-    from SpotApi.CreateBleDevice.config import mcu_fast_pair_model_id
-    from SpotApi.CreateBleDevice.create_ble_device import register_device
-    from SpotApi.UploadPrecomputedPublicKeyIds.upload_precomputed_public_key_ids import refresh_custom_trackers
+def _parse_advertisement_key(stdout_text: str) -> str | None:
+    """
+    register_esp32() prints a big ASCII box containing eid.hex().
+    We'll extract the longest hex string (24..128).
+    """
+    if not stdout_text:
+        return None
+    cands = re.findall(r"\b[0-9a-fA-F]{24,128}\b", stdout_text)
+    if not cands:
+        return None
+    cands.sort(key=len, reverse=True)
+    return cands[0].lower()
 
-    fast_pair_id = body_dict.get("fast_pair_model_id") or mcu_fast_pair_model_id
 
-    eid = register_device(
-        user_defined_name=body_dict["name"],
-        image_url=body_dict.get("image_url"),
-        manufacturer_name=body_dict.get("manufacturer") or "GoogleFindMyTools",
-        model_name=body_dict.get("model") or "Custom Tracker",
-        fast_pair_model_id=fast_pair_id,
-        rotation_exponent=int(body_dict.get("rotation_exponent") or 10),
-    )
-
-    try:
-        refresh_custom_trackers()
-    except Exception:
-        pass
-
-    return eid
+def _job_create_custom_esp32():
+    """
+    Use repo's register_esp32() exactly.
+    It prints the Advertisement Key (EID hex) to stdout.
+    """
+    from SpotApi.CreateBleDevice.create_ble_device import register_esp32
+    return register_esp32()
 
 
 def _worker_entry(conn, job: str, tools_dir_str: str, payload: dict | None):
     """
-    Generic worker: executes one job.
-    Returns via pipe: ("ok", result) | ("reauth", reason) | ("err", traceback)
+    Returns via pipe:
+      ("ok", {"result":..., "stdout":...})
+      ("reauth", {"reason":..., "stdout":...})
+      ("err", {"error":..., "stdout":...})
     """
-    orig_input = orig_out = orig_err = None
+    orig_input = orig_out = orig_err = cap = None
     try:
-        orig_input, orig_out, orig_err = _worker_bootstrap(tools_dir_str)
+        orig_input, orig_out, orig_err, cap = _worker_bootstrap(tools_dir_str)
 
         if job == "list_devices":
             res = _job_list_devices()
-            conn.send(("ok", res))
+            conn.send(("ok", {"result": res, "stdout": cap.get_text()}))
             return
 
-        if job == "create_custom":
-            res = _job_create_custom(payload or {})
-            conn.send(("ok", res))
+        if job == "create_custom_esp32":
+            res = _job_create_custom_esp32()
+            conn.send(("ok", {"result": res, "stdout": cap.get_text()}))
             return
 
-        conn.send(("err", f"Unknown job: {job}"))
+        conn.send(("err", {"error": f"Unknown job: {job}", "stdout": cap.get_text() if cap else ""}))
 
     except KeyboardInterrupt as e:
-        conn.send(("reauth", str(e)))
+        conn.send(("reauth", {"reason": str(e), "stdout": cap.get_text() if cap else ""}))
     except Exception:
-        conn.send(("err", traceback.format_exc()))
+        conn.send(("err", {"error": traceback.format_exc(), "stdout": cap.get_text() if cap else ""}))
     finally:
         if orig_input is not None:
             _worker_restore(orig_input, orig_out, orig_err)
 
 
-def _run_isolated(job: str, payload: dict | None = None, timeout_s: int = 12):
+def _run_isolated(job: str, payload: dict | None = None, timeout_s: int = 25):
     parent, child = mp.Pipe(duplex=False)
     p = mp.Process(target=_worker_entry, args=(child, job, str(TOOLS_DIR), payload), daemon=True)
     p.start()
@@ -631,12 +690,11 @@ def _run_isolated(job: str, payload: dict | None = None, timeout_s: int = 12):
                 pass
         return kind, out
 
-    # timeout => treat as reauth (prevents freeze)
     try:
         p.terminate()
     except Exception:
         pass
-    return "reauth", "TIMEOUT"
+    return "reauth", {"reason": "TIMEOUT", "stdout": ""}
 
 
 # =========================================================
@@ -792,30 +850,47 @@ def api_devices():
     kind, payload = _run_isolated("list_devices", timeout_s=12)
 
     if kind == "ok":
-        return {"ok": True, "devices": _normalize_devices(payload)}
+        return {"ok": True, "devices": _normalize_devices((payload or {}).get("result"))}
 
     if kind == "reauth":
-        _log(f"[devices] reauth detected: {payload}")
-        return _reauth_response(payload, status_code=401)
+        reason = (payload or {}).get("reason", "REAUTH")
+        _log(f"[devices] reauth detected: {reason}")
+        return _reauth_response(reason, status_code=401)
 
-    _log("[devices] EXCEPTION:\n" + str(payload))
-    return JSONResponse({"ok": False, "error": payload}, status_code=500)
+    err = (payload or {}).get("error", "Unknown error")
+    _log("[devices] EXCEPTION:\n" + str(err))
+    return JSONResponse({"ok": False, "error": err}, status_code=500)
 
 
 @app.post("/api/devices/custom")
-def api_devices_custom_create(body: CustomDeviceCreate):
+def api_devices_custom_create():
+    """
+    ESP32 tracker: SpotApi.CreateBleDevice.create_ble_device.register_esp32()
+    Return advertisement_key (eid hex).
+    """
     deny = _require_auth()
     if deny:
         return deny
 
-    kind, payload = _run_isolated("create_custom", payload=body.model_dump(), timeout_s=20)
+    kind, payload = _run_isolated("create_custom_esp32", payload={}, timeout_s=25)
 
     if kind == "ok":
-        return {"ok": True, "eid": payload, "message": "Custom device registered."}
+        stdout_text = (payload or {}).get("stdout", "")
+        adv_key = _parse_advertisement_key(stdout_text)
+        if not adv_key:
+            return {
+                "ok": True,
+                "message": "Device registered, but key not parsed. Check stdout.",
+                "advertisement_key": None,
+                "stdout_tail": stdout_text[-1600:],
+            }
+        return {"ok": True, "message": "ESP32 device registered.", "advertisement_key": adv_key}
 
     if kind == "reauth":
-        _log(f"[devices/custom] reauth detected: {payload}")
-        return _reauth_response(payload, status_code=401)
+        reason = (payload or {}).get("reason", "REAUTH")
+        _log(f"[devices/custom] reauth detected: {reason}")
+        return _reauth_response(reason, status_code=401)
 
-    _log("[devices/custom] EXCEPTION:\n" + str(payload))
-    return JSONResponse({"ok": False, "error": payload}, status_code=500)
+    err = (payload or {}).get("error", "Unknown error")
+    _log("[devices/custom] EXCEPTION:\n" + str(err))
+    return JSONResponse({"ok": False, "error": err}, status_code=500)

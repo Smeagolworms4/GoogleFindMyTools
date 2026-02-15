@@ -133,7 +133,7 @@
         font-size: 13px;
       }
 
-      select, input {
+      select {
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid var(--border);
         color: var(--text);
@@ -141,8 +141,6 @@
         padding: 8px 10px;
         outline: none;
       }
-
-      input { padding: 10px; }
 
       .devices-card { margin-top: 16px; }
 
@@ -166,6 +164,18 @@
         margin-top: 14px;
         border-top: 1px solid var(--border);
         padding-top: 14px;
+      }
+
+      code.key {
+        display: inline-block;
+        padding: 6px 10px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.03);
+        border-radius: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        color: #d7e6ff;
+        word-break: break-all;
       }
     </style>
   </head>
@@ -204,7 +214,6 @@
         </div>
       </div>
 
-      <!-- Devices: visible only when authenticated -->
       <div class="card devices-card" v-if="connected">
         <div class="section-title">{{ t('devices') }}</div>
 
@@ -229,24 +238,18 @@
           <div class="section-title">{{ t('addCustomDevice') }}</div>
 
           <div class="row">
-            <input v-model="form.name" :placeholder="t('name')" style="flex:1; min-width:220px;" />
-            <input v-model="form.model" :placeholder="t('model')" style="flex:1; min-width:180px;" />
-          </div>
-
-          <div class="row">
-            <input v-model="form.manufacturer" :placeholder="t('manufacturer')" style="flex:1; min-width:220px;" />
-            <input v-model="form.image_url" :placeholder="t('imageUrl')" style="flex:1; min-width:220px;" />
-          </div>
-
-          <div class="row">
             <button :disabled="busyAdd" @click="addCustom">{{ busyAdd ? t('adding') : t('add') }}</button>
             <div class="hint" v-if="addMsg">{{ addMsg }}</div>
+          </div>
+
+          <div v-if="advKey" class="hint" style="margin-top:10px;">
+            Advertisement Key<br/>
+            <code class="key">{{ advKey }}</code>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Vue 3 (inline) -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 
     <script>
@@ -265,7 +268,7 @@
             i18n: null,
             lang: detectLang(),
 
-            statusKind: "",         // good|warn|bad
+            statusKind: "",
             statusText: "…",
             errorMsg: "",
 
@@ -277,23 +280,15 @@
             authStarted: false,
             pollingTimer: null,
 
-            // anti-loop for auto reauth
             autoReauthCooldownUntil: 0,
 
-            // devices
             devices: [],
             devicesLoading: false,
             busyDevices: false,
 
-            // add custom
-            form: {
-              name: "",
-              model: "Custom Tracker",
-              manufacturer: "GoogleFindMyTools",
-              image_url: ""
-            },
             busyAdd: false,
-            addMsg: ""
+            addMsg: "",
+            advKey: ""
           };
         },
 
@@ -340,17 +335,13 @@
           },
 
           formatApiError(res) {
-            // res is {status, json}
             const j = res && res.json ? res.json : {};
-            if (j && (j.message || j.error)) {
-              return j.message || j.error;
-            }
+            if (j && (j.message || j.error)) return j.message || j.error;
             return `HTTP ${res.status || "?"}`;
           },
 
           shouldAutoReauth() {
-            const now = Date.now();
-            return now >= this.autoReauthCooldownUntil;
+            return Date.now() >= this.autoReauthCooldownUntil;
           },
 
           armAutoReauthCooldown(ms) {
@@ -358,18 +349,15 @@
           },
 
           async triggerReauth(reasonText) {
-            // avoid infinite loop spam
             if (!this.shouldAutoReauth()) return;
 
             this.connected = false;
             this.devices = [];
             this.addMsg = "";
+            this.advKey = "";
             this.errorMsg = reasonText || this.t("authFailed");
 
-            // cooldown 8s so device polling doesn't spam auth
             this.armAutoReauthCooldown(8000);
-
-            // auto open iframe + start auth flow
             await this.startFlow();
           },
 
@@ -383,7 +371,6 @@
 
               if (this.connected) {
                 this.setStatus("good", this.t("connected"));
-                // optional: lazy load
                 await this.loadDevices();
               } else {
                 this.setStatus("bad", this.t("disconnected"));
@@ -417,7 +404,6 @@
                   this.setStatus("good", this.t("connected"));
                   this.errorMsg = "";
 
-                  // Close iframe on success
                   this.iframeVisible = false;
                   this.iframeUrl = "about:blank";
 
@@ -427,7 +413,6 @@
                   this.setStatus("bad", this.t("authFailed"));
                   const errMsg = (st.result && st.result.error) ? st.result.error : "Unknown error";
                   this.errorMsg = errMsg;
-                  // keep iframe visible on failure
                 }
 
                 this.authStarted = false;
@@ -446,7 +431,6 @@
           },
 
           async startFlow() {
-            // guard: if already running auth flow, don't restart
             if (this.authStarted) return;
 
             this.busy = true;
@@ -460,7 +444,6 @@
               this.iframeVisible = true;
               this.iframeUrl = nv.iframe_url;
 
-              // start auth
               this.authStarted = true;
               this.setStatus("warn", this.t("authenticating"));
               await this.apiPost("/api/auth/start");
@@ -487,7 +470,6 @@
               this.devices = Array.isArray(r.devices) ? r.devices : [];
             } catch (e) {
               const j = (e && e.json) ? e.json : {};
-              // formatted reauth from backend
               if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
                 await this.triggerReauth(`${this.t("authFailed")}\n${j.details || ""}`);
                 return;
@@ -501,21 +483,13 @@
 
           async addCustom() {
             this.addMsg = "";
-            if (!this.form.name || !this.form.name.trim()) {
-              this.addMsg = this.t("nameRequired");
-              return;
-            }
-
+            this.advKey = "";
             this.busyAdd = true;
-            try {
-              await this.apiPost("/api/devices/custom", {
-                name: this.form.name.trim(),
-                model: (this.form.model || "").trim(),
-                manufacturer: (this.form.manufacturer || "").trim(),
-                image_url: (this.form.image_url || "").trim()
-              });
 
+            try {
+              const r = await this.apiPost("/api/devices/custom", {});
               this.addMsg = this.t("addedOk");
+              if (r && r.advertisement_key) this.advKey = r.advertisement_key;
               await this.loadDevices();
             } catch (e) {
               const j = (e && e.json) ? e.json : {};
@@ -531,7 +505,6 @@
         },
 
         async mounted() {
-          // load external JSON (must be external)
           try {
             const r = await fetch("/static/i18n.json", { cache: "no-store" });
             this.i18n = await r.json();

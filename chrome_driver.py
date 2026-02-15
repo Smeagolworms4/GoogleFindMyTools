@@ -38,7 +38,14 @@ def find_chrome():
     return None
 
 def get_options():
+    profile_dir = os.environ.get("GFM_CHROME_PROFILE_DIR", "/data/chrome")
+    os.makedirs(profile_dir, exist_ok=True)
+
     chrome_options = uc.ChromeOptions()
+    chrome_options.add_argument(f"--user-data-dir={profile_dir}")
+    chrome_options.add_argument("--profile-directory=Default")
+    chrome_options.add_argument("--no-first-run")
+    chrome_options.add_argument("--no-default-browser-check")
     chrome_options.add_argument("--start-maximized")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -56,7 +63,7 @@ def create_driver():
             time.sleep(2)  # Wait for processes to close
         except:
             pass
-            
+
         chrome_options = get_options()
         driver = uc.Chrome(options=chrome_options, version_main=None)
         print("[ChromeDriver] Installed and browser started.")
@@ -76,7 +83,7 @@ def create_driver():
                 print(f"[ChromeDriver] ChromeDriver failed using path {chrome_path}: {e}")
         else:
             print("[ChromeDriver] No Chrome executable found in known paths.")
-        
+
         # Final fallback - try headless mode
         print("[ChromeDriver] Trying headless mode as last resort...")
         try:
@@ -87,7 +94,7 @@ def create_driver():
             return driver
         except Exception as e:
             print(f"[ChromeDriver] Headless mode also failed: {e}")
-        
+
         raise Exception(
             "[ChromeDriver] Failed to install ChromeDriver. A current version of Chrome was not detected on your system.\n"
             "If you know that Chrome is installed, update Chrome to the latest version. If the script is still not working, "
