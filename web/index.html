@@ -302,7 +302,7 @@
       </div>
     </div>
 
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="static/vue.global.prod.js"></script>
 
     <script>
       const { createApp } = Vue;
@@ -512,8 +512,9 @@
               const nv = await this.apiPost("api/novnc/start");
               if (!nv.iframe_url) throw { status: 500, json: { error: "noVNC start returned no iframe_url" } };
 
+              const prefix = window.location.pathname.replace(/^\/|\/$/g, '');
               this.iframeVisible = true;
-              this.iframeUrl = nv.iframe_url;
+              this.iframeUrl = nv.iframe_url.url + '?' + 'path=' + ( prefix ? prefix + '/' : '' )  +nv.iframe_url.path;
 
               this.authStarted = true;
               this.setStatus("warn", this.t("authenticating"));
@@ -631,7 +632,7 @@
 
         async mounted() {
           try {
-            const r = await fetch("/static/i18n.json", { cache: "no-store" });
+            const r = await fetch("static/i18n.json", { cache: "no-store" });
             this.i18n = await r.json();
           } catch(e) {
             console.error(e);

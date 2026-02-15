@@ -191,7 +191,10 @@ def _schedule_cleanup_after_done_if_success(marker: dict | None):
 
 
 def _iframe_url():
-    return "novnc/vnc.html?path=novnc/websockify&autoconnect=1&reconnect=1&resize=scale"
+    return {
+        "url": "novnc/vnc.html",
+        "path": "novnc/websockify&autoconnect=1&reconnect=1&resize=scale"   
+    }
 
 
 def _ensure_runtime_env():
