@@ -19,7 +19,6 @@
         --warn: #f59e0b;
         --bad: #ef4444;
       }
-
       body {
         margin: 0;
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
@@ -27,9 +26,7 @@
         background: var(--bg);
         color: var(--text);
       }
-
       .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
-
       .card {
         background: var(--card);
         border: 1px solid var(--border);
@@ -37,7 +34,6 @@
         padding: 18px;
         box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
       }
-
       .topbar {
         display: flex;
         align-items: center;
@@ -45,9 +41,7 @@
         gap: 12px;
         flex-wrap: wrap;
       }
-
       h1 { font-size: 18px; margin: 0; font-weight: 650; }
-
       .row {
         display: flex;
         gap: 12px;
@@ -55,7 +49,6 @@
         flex-wrap: wrap;
         margin-top: 12px;
       }
-
       .status-pill {
         display: inline-flex;
         align-items: center;
@@ -67,7 +60,6 @@
         color: var(--muted);
         font-size: 13px;
       }
-
       .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--muted); }
       .dot.good { background: var(--good); }
       .dot.warn { background: var(--warn); }
@@ -82,13 +74,11 @@
         color: white;
         background: var(--btn);
       }
-
       button.secondary {
         background: var(--btn2);
         color: var(--text);
         border: 1px solid var(--border);
       }
-
       button:disabled { opacity: 0.55; cursor: not-allowed; }
 
       .hint {
@@ -142,34 +132,16 @@
         padding: 8px 10px;
         outline: none;
       }
-      select option {
-        background-color: #222;
-        color: #fff;
-      }
-      
+      select option { background-color: #222; color: #fff; }
+
       .devices-card { margin-top: 16px; }
-
-      .section-title {
-        margin-bottom: 10px;
-        font-size: 16px;
-        font-weight: 650;
-      }
-
+      .section-title { margin-bottom: 10px; font-size: 16px; font-weight: 650; }
       .list { margin-top: 10px; }
-
-      .item {
-        padding: 8px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-      }
-
+      .item { padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
       .item-title { font-weight: 650; }
       .item-sub { color: var(--muted); font-size: 12px; }
 
-      .split {
-        margin-top: 14px;
-        border-top: 1px solid var(--border);
-        padding-top: 14px;
-      }
+      .split { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
 
       code.key {
         display: inline-block;
@@ -239,6 +211,7 @@
           </div>
         </div>
 
+        <!-- Add custom -->
         <div class="split">
           <div class="section-title">{{ t('addCustomDevice') }}</div>
 
@@ -299,6 +272,38 @@
           </div>
         </div>
 
+        <!-- Sound -->
+        <div class="split">
+          <div class="section-title">{{ t('sound') }}</div>
+
+          <div class="row" style="margin-top:0;">
+            <select v-model="soundDeviceId" style="min-width:320px;">
+              <option disabled value="">{{ t('selectDevice') }}</option>
+              <option v-for="(d, idx) in devices" :key="'s'+idx" :value="d.id">
+                {{ (d.name || '(no name)') + ' — ' + (d.id || '') }}
+              </option>
+            </select>
+
+            <button class="secondary" :disabled="busySound || !soundDeviceId" @click="playSound">
+              {{ busySound ? t('working') : t('playSound') }}
+            </button>
+
+            <button class="secondary" :disabled="busySound || !soundDeviceId" @click="stopSound">
+              {{ busySound ? t('working') : t('stopSound') }}
+            </button>
+
+            <button class="secondary" :disabled="!soundResult" @click="copyText(soundResult)">
+              {{ t('copy') }}
+            </button>
+          </div>
+
+          <div v-if="soundMsg" class="hint" style="margin-top:8px;">{{ soundMsg }}</div>
+
+          <div v-if="soundResult" class="hint" style="margin-top:10px;">
+            <pre class="error-box" style="max-height:260px; overflow:auto;">{{ soundResult }}</pre>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -350,7 +355,13 @@
             selectedDeviceId: "",
             busyLocate: false,
             locateMsg: "",
-            locateResult: ""
+            locateResult: "",
+
+            // sound
+            soundDeviceId: "",
+            busySound: false,
+            soundMsg: "",
+            soundResult: ""
           };
         },
 
@@ -359,7 +370,7 @@
             const I = this.i18n || {};
             const result = (I[this.lang] && I[this.lang][key]) || (I.en && I.en[key]) || null;
             if (result === null) {
-              console.warn('Transaltion not found "'+key+'"');
+              console.warn('Translation not found "'+key+'"');
               return key;
             }
             return result;
@@ -426,6 +437,9 @@
             this.selectedDeviceId = "";
             this.locateMsg = "";
             this.locateResult = "";
+            this.soundDeviceId = "";
+            this.soundMsg = "";
+            this.soundResult = "";
             this.errorMsg = reasonText || this.t("authFailed");
 
             this.armAutoReauthCooldown(8000);
@@ -543,6 +557,9 @@
               if (this.selectedDeviceId && !this.devices.find(d => d.id === this.selectedDeviceId)) {
                 this.selectedDeviceId = "";
               }
+              if (this.soundDeviceId && !this.devices.find(d => d.id === this.soundDeviceId)) {
+                this.soundDeviceId = "";
+              }
             } catch (e) {
               const j = (e && e.json) ? e.json : {};
               if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
@@ -601,7 +618,8 @@
             try {
               const r = await this.apiPost("/api/devices/locate", { device_id: this.selectedDeviceId });
               this.locateMsg = this.t("locateOk");
-              this.locateResult = JSON.stringify(r.location ?? r, null, 2);
+              // backend renvoie stdout
+              this.locateResult = (r && r.stdout) ? r.stdout : JSON.stringify(r, null, 2);
             } catch (e) {
               const j = (e && e.json) ? e.json : {};
               if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
@@ -611,6 +629,35 @@
               this.locateMsg = `${this.t("locateFailed")} ${this.formatApiError(e)}`;
             } finally {
               this.busyLocate = false;
+            }
+          },
+
+          async playSound() {
+            await this.soundAction(true);
+          },
+
+          async stopSound() {
+            await this.soundAction(false);
+          },
+
+          async soundAction(enable) {
+            this.soundMsg = "";
+            this.soundResult = "";
+            this.busySound = true;
+
+            try {
+              const r = await this.apiPost("/api/devices/sound", { device_id: this.soundDeviceId, enable: !!enable });
+              this.soundMsg = this.t("soundOk");
+              this.soundResult = JSON.stringify(r, null, 2);
+            } catch (e) {
+              const j = (e && e.json) ? e.json : {};
+              if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
+                await this.triggerReauth(`${this.t("authFailed")}\n${j.details || ""}`);
+                return;
+              }
+              this.soundMsg = `${this.t("soundFailed")} ${this.formatApiError(e)}`;
+            } finally {
+              this.busySound = false;
             }
           },
 

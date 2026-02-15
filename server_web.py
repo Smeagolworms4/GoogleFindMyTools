@@ -15,7 +15,6 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 from collections import deque
-from typing import Optional, Any
 
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -89,7 +88,6 @@ def _log(line: str):
         return
     with log_lock:
         log_buf.append(line)
-    # utile aussi dans docker logs
     print(line, flush=True)
 
 
@@ -142,9 +140,6 @@ def _run_sh(cmd: str):
 
 
 def _kill_chrome_family_hard():
-    """
-    Cleanup: sync pkill (no zombies).
-    """
     _run_sh(
         f"pkill -TERM -f 'DISPLAY={DISPLAY}' 2>/dev/null || true; "
         f"pkill -TERM -f 'XDG_RUNTIME_DIR=/tmp/runtime-root' 2>/dev/null || true; true"
@@ -168,9 +163,6 @@ def _kill_chrome_family_hard():
 
 
 def _schedule_cleanup_after_done_if_success(marker: dict | None):
-    """
-    IMPORTANT: on ne cleanup que si success=True.
-    """
     global cleanup_scheduled
     if not marker or not marker.get("success"):
         return
@@ -217,14 +209,6 @@ def _ensure_runtime_env():
 
 
 def _ensure_x_started():
-    """
-    Ne change rien à ton comportement d’avant :
-    - start Xvfb
-    - start openbox
-    - start x11vnc
-    - start websockify
-    - wait novnc port open
-    """
     global xvfb_proc, wm_proc, vnc_proc, ws_proc
 
     _ensure_runtime_env()
@@ -315,9 +299,6 @@ def _wait_for_secrets(timeout_s: int) -> bool:
 
 
 def _kick_chrome_into_view():
-    """
-    Helper pour ramener Chrome en plein écran dans VNC.
-    """
     cmd = f"""
 set -e
 export DISPLAY={DISPLAY}
@@ -347,15 +328,10 @@ exit 0
 
 
 # =========================================================
-# FULL AUTH JOB (single iframe, but may open Chrome multiple times)
+# FULL AUTH JOB
 # =========================================================
 
 def _auth_only_job():
-    """
-    FULL AUTH:
-    - aas + adm
-    - spot token + owner key check
-    """
     global auth_state, auth_started_ts
 
     success = False
@@ -505,7 +481,7 @@ def _normalize_devices(devices_any):
 
 
 # =========================================================
-# Isolated runner (NO FREEZE) - generic
+# Isolated runner (NO FREEZE)
 # =========================================================
 
 _AUTH_ABORT_PATTERNS = [
@@ -530,7 +506,6 @@ def _detect_reauth_line(line: str) -> str | None:
                     return code
                 continue
             return code
-
     return None
 
 
@@ -544,7 +519,6 @@ class _CaptureAndAbort(io.TextIOBase):
     def write(self, s):
         if not s:
             return 0
-
         text = str(s)
         for line in text.splitlines():
             reason = _detect_reauth_line(line)
@@ -573,6 +547,7 @@ def _worker_bootstrap(tools_dir_str: str):
     if tools_dir_str and tools_dir_str not in sys.path:
         sys.path.insert(0, tools_dir_str)
 
+    # never allow input() to block
     orig_input = builtins.input
     builtins.input = lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt("INPUT_BLOCKED"))
 
@@ -614,25 +589,35 @@ def _job_create_custom_esp32():
     return register_esp32()
 
 
-def _job_locate_device(device_id: str):
+def _job_locate_device_via_repo(canonic_device_id: str):
     """
-    Locate (best-effort). Adapte l'import si besoin selon ton repo.
+    VRAI chemin repo:
+      NovaApi/ExecuteAction/LocateTracker/location_request.py
+        -> get_location_data_for_device(canonic_device_id, name)
+    Cette fonction print + boucle jusqu'à réception FCM.
+    On ne "return" pas: on renvoie le stdout capturé côté worker.
     """
-    # tentative 1 (Nova)
-    try:
-        from NovaApi.LocateDevice.nbe_locate_device import locate_device
-        return locate_device(device_id)
-    except Exception:
-        pass
+    from NovaApi.ExecuteAction.LocateTracker.location_request import get_location_data_for_device
+    # name = juste pour logs
+    return get_location_data_for_device(canonic_device_id, "UI")
 
-    # tentative 2 (Spot)
-    try:
-        from SpotApi.GetDeviceLocation.get_device_location import get_device_location
-        return get_device_location(device_id)
-    except Exception:
-        pass
 
-    raise RuntimeError("No locate implementation found in repo. Wire the correct locate function import.")
+def _job_sound_via_repo(canonic_device_id: str, enable: bool):
+    """
+    Basé sur l'exemple repo:
+      FcmReceiver().register_for_location_updates(...)
+      create_sound_request(enable, canonic_device_id, fcm_token)
+      nova_request(NOVA_ACTION_API_SCOPE, hex_payload)
+    """
+    from Auth.fcm_receiver import FcmReceiver
+    from NovaApi.ExecuteAction.PlaySound.sound_request import create_sound_request
+    from NovaApi.nova_request import nova_request
+    from NovaApi.scopes import NOVA_ACTION_API_SCOPE
+
+    fcm_token = FcmReceiver().register_for_location_updates(lambda _x: None)
+    hex_payload = create_sound_request(bool(enable), canonic_device_id, fcm_token)
+    nova_request(NOVA_ACTION_API_SCOPE, hex_payload)
+    return {"sent": True, "enable": bool(enable)}
 
 
 def _worker_entry(conn, job: str, tools_dir_str: str, payload: dict | None):
@@ -655,7 +640,18 @@ def _worker_entry(conn, job: str, tools_dir_str: str, payload: dict | None):
             if not dev_id:
                 conn.send(("err", {"error": "device_id missing", "stdout": cap.get_text()}))
                 return
-            res = _job_locate_device(str(dev_id))
+            _job_locate_device_via_repo(str(dev_id))
+            # résultat = logs stdout
+            conn.send(("ok", {"result": None, "stdout": cap.get_text()}))
+            return
+
+        if job == "sound":
+            dev_id = (payload or {}).get("device_id")
+            enable = (payload or {}).get("enable")
+            if not dev_id or enable is None:
+                conn.send(("err", {"error": "device_id and enable required", "stdout": cap.get_text()}))
+                return
+            res = _job_sound_via_repo(str(dev_id), bool(enable))
             conn.send(("ok", {"result": res, "stdout": cap.get_text()}))
             return
 
@@ -881,10 +877,6 @@ def api_devices():
 
 @app.post("/api/devices/custom")
 def api_devices_custom_create():
-    """
-    ESP32 tracker: SpotApi.CreateBleDevice.create_ble_device.register_esp32()
-    Return advertisement_key (eid hex).
-    """
     deny = _require_auth()
     if deny:
         return deny
@@ -915,9 +907,6 @@ def api_devices_custom_create():
 
 @app.post("/api/devices/locate")
 def api_devices_locate(body: dict):
-    """
-    Locate a device by id. Returns raw JSON from repo.
-    """
     deny = _require_auth()
     if deny:
         return deny
@@ -926,10 +915,12 @@ def api_devices_locate(body: dict):
     if not device_id:
         return JSONResponse({"ok": False, "error": "device_id required"}, status_code=400)
 
-    kind, payload = _run_isolated("locate_device", payload={"device_id": str(device_id)}, timeout_s=25)
+    # ça peut prendre plus longtemps (FCM + decrypt + prints)
+    kind, payload = _run_isolated("locate_device", payload={"device_id": str(device_id)}, timeout_s=45)
 
     if kind == "ok":
-        return {"ok": True, "location": (payload or {}).get("result")}
+        stdout_text = (payload or {}).get("stdout", "")
+        return {"ok": True, "stdout": stdout_text}
 
     if kind == "reauth":
         reason = (payload or {}).get("reason", "REAUTH")
@@ -938,4 +929,34 @@ def api_devices_locate(body: dict):
 
     err = (payload or {}).get("error", "Unknown error")
     _log("[devices/locate] EXCEPTION:\n" + str(err))
+    return JSONResponse({"ok": False, "error": err}, status_code=500)
+
+
+@app.post("/api/devices/sound")
+def api_devices_sound(body: dict):
+    """
+    enable=true -> play sound
+    enable=false -> stop sound
+    """
+    deny = _require_auth()
+    if deny:
+        return deny
+
+    device_id = (body or {}).get("device_id")
+    enable = (body or {}).get("enable")
+    if not device_id or enable is None:
+        return JSONResponse({"ok": False, "error": "device_id and enable required"}, status_code=400)
+
+    kind, payload = _run_isolated("sound", payload={"device_id": str(device_id), "enable": bool(enable)}, timeout_s=25)
+
+    if kind == "ok":
+        return {"ok": True, "result": (payload or {}).get("result"), "stdout": (payload or {}).get("stdout", "")}
+
+    if kind == "reauth":
+        reason = (payload or {}).get("reason", "REAUTH")
+        _log(f"[devices/sound] reauth detected: {reason}")
+        return _reauth_response(reason, status_code=401)
+
+    err = (payload or {}).get("error", "Unknown error")
+    _log("[devices/sound] EXCEPTION:\n" + str(err))
     return JSONResponse({"ok": False, "error": err}, status_code=500)

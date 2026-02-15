@@ -5,6 +5,7 @@
     "authenticate": "Authenticate",
     "refresh": "Refresh",
     "hint": "Click Authenticate to open a noVNC session and complete Google login. When authentication finishes, the session will close automatically.",
+
     "checking": "Checking connection…",
     "connected": "Connected",
     "disconnected": "Disconnected",
@@ -13,25 +14,36 @@
     "authenticating": "Authenticating…",
     "failedToStart": "Failed to start",
     "authFailed": "Authentication failed",
+
     "devices": "Devices",
     "reloadDevices": "Reload devices",
     "loading": "Loading…",
     "noDevices": "No devices found.",
     "devicesLoadFailed": "Failed to load devices.",
-    "addCustomDevice": "Add custom device (ESP32)",
+
+    "addCustomDevice": "Add custom device",
     "add": "Add",
     "adding": "Adding…",
     "addedOk": "Added.",
     "addFailed": "Add failed.",
-    "secrets": "secrets.json",
+
+    "secrets": "Secrets",
     "showSecrets": "Show secrets.json",
     "copy": "Copy",
-    "locate": "Locate device",
+
+    "locate": "Locate",
     "selectDevice": "Select a device…",
-    "locateBtn": "Locate",
     "locating": "Locating…",
-    "locateOk": "Locate OK.",
-    "locateFailed": "Locate failed."
+    "locateBtn": "Locate",
+    "locateOk": "Locate request done. See logs below.",
+    "locateFailed": "Locate failed:",
+
+    "sound": "Sound",
+    "playSound": "Play sound",
+    "stopSound": "Stop sound",
+    "working": "Working…",
+    "soundOk": "Sound action sent.",
+    "soundFailed": "Sound failed:"
   },
   "fr": {
     "title": "Google Find My Tools",
@@ -39,6 +51,7 @@
     "authenticate": "Authentifier",
     "refresh": "Rafraîchir",
     "hint": "Clique sur Authentifier pour ouvrir une session noVNC et faire la connexion Google. Quand l’authentification est terminée, la session se fermera automatiquement.",
+
     "checking": "Vérification…",
     "connected": "Connecté",
     "disconnected": "Déconnecté",
@@ -47,24 +60,35 @@
     "authenticating": "Authentification…",
     "failedToStart": "Échec du démarrage",
     "authFailed": "Échec d’authentification",
+
     "devices": "Appareils",
     "reloadDevices": "Rafraîchir la liste",
     "loading": "Chargement…",
     "noDevices": "Aucun appareil trouvé.",
     "devicesLoadFailed": "Impossible de charger la liste.",
-    "addCustomDevice": "Ajouter un appareil custom (ESP32)",
+
+    "addCustomDevice": "Ajouter un appareil custom",
     "add": "Ajouter",
     "adding": "Ajout…",
     "addedOk": "Ajouté.",
     "addFailed": "Échec de l’ajout.",
-    "secrets": "secrets.json",
+
+    "secrets": "Secrets",
     "showSecrets": "Afficher secrets.json",
     "copy": "Copier",
-    "locate": "Localiser un appareil",
+
+    "locate": "Localiser",
     "selectDevice": "Choisir un appareil…",
-    "locateBtn": "Localiser",
     "locating": "Localisation…",
-    "locateOk": "OK.",
-    "locateFailed": "Échec."
+    "locateBtn": "Localiser",
+    "locateOk": "Requête de localisation envoyée. Voir logs ci-dessous.",
+    "locateFailed": "Échec localisation :",
+
+    "sound": "Son",
+    "playSound": "Jouer un son",
+    "stopSound": "Arrêter le son",
+    "working": "En cours…",
+    "soundOk": "Action sonore envoyée.",
+    "soundFailed": "Échec son :"
   }
 }
