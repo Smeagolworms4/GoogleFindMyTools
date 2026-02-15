@@ -667,8 +667,9 @@ def _worker_entry(conn, job: str, tools_dir_str: str, payload: dict | None):
 
 
 def _run_isolated(job: str, payload: dict | None = None, timeout_s: int = 25):
-    parent, child = mp.Pipe(duplex=False)
-    p = mp.Process(target=_worker_entry, args=(child, job, str(TOOLS_DIR), payload), daemon=True)
+    ctx = mp.get_context("spawn")  # <-- clé : fresh process, fresh imports, fresh secrets
+    parent, child = ctx.Pipe(duplex=False)
+    p = ctx.Process(target=_worker_entry, args=(child, job, str(TOOLS_DIR), payload), daemon=True)
     p.start()
 
     if parent.poll(timeout_s):
