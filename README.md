@@ -10,7 +10,7 @@ Currently, it is possible to query Find My Device / Find Hub trackers and Androi
 
 This fork is a fully web-based integration of the Python script. It includes a no-VNC service for connecting with Google Chrome.
 
-![DEMO](https://raw.githubusercontent.com/Smeagolworms4/GoogleFindMyTools/master/demo.jpg)
+![DEMO](https://raw.githubusercontent.com/Smeagolworms4/GoogleFindMyTools/main/demo.jpg)
 
 
 To launch the container:
