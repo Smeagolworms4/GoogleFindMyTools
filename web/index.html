@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Google Find My Tools - UI</title>
+
     <style>
       :root {
         --bg: #0b0f17;
@@ -26,11 +27,7 @@
         color: var(--text);
       }
 
-      .wrap {
-        max-width: 980px;
-        margin: 0 auto;
-        padding: 24px;
-      }
+      .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
 
       .card {
         background: var(--card);
@@ -48,11 +45,7 @@
         flex-wrap: wrap;
       }
 
-      h1 {
-        font-size: 18px;
-        margin: 0;
-        font-weight: 650;
-      }
+      h1 { font-size: 18px; margin: 0; font-weight: 650; }
 
       .row {
         display: flex;
@@ -74,13 +67,7 @@
         font-size: 13px;
       }
 
-      .dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: var(--muted);
-      }
-
+      .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--muted); }
       .dot.good { background: var(--good); }
       .dot.warn { background: var(--warn); }
       .dot.bad  { background: var(--bad); }
@@ -101,10 +88,7 @@
         border: 1px solid var(--border);
       }
 
-      button:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-      }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
 
       .hint {
         margin-top: 10px;
@@ -120,10 +104,11 @@
         overflow: hidden;
         display: none;
       }
+      .iframe-wrap.show { display: block; }
 
       iframe {
         width: 100%;
-        height: 720px;
+        height: 530px;
         border: 0;
         background: #000;
         display: block;
@@ -136,7 +121,6 @@
         border: 1px solid rgba(239, 68, 68, 0.35);
         background: rgba(239, 68, 68, 0.08);
         color: #ffd0d0;
-        display: none;
         white-space: pre-wrap;
         font-size: 12px;
       }
@@ -149,7 +133,7 @@
         font-size: 13px;
       }
 
-      select {
+      select, input {
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid var(--border);
         color: var(--text);
@@ -157,17 +141,44 @@
         padding: 8px 10px;
         outline: none;
       }
+
+      input { padding: 10px; }
+
+      .devices-card { margin-top: 16px; }
+
+      .section-title {
+        margin-bottom: 10px;
+        font-size: 16px;
+        font-weight: 650;
+      }
+
+      .list { margin-top: 10px; }
+
+      .item {
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .item-title { font-weight: 650; }
+      .item-sub { color: var(--muted); font-size: 12px; }
+
+      .split {
+        margin-top: 14px;
+        border-top: 1px solid var(--border);
+        padding-top: 14px;
+      }
     </style>
   </head>
 
   <body>
-    <div class="wrap">
+    <div id="app" class="wrap">
       <div class="card">
         <div class="topbar">
-          <h1 id="title">Google Find My Tools</h1>
+          <h1>{{ t('title') }}</h1>
+
           <div class="lang">
-            <span id="langLabel">Language</span>
-            <select id="langSelect">
+            <span>{{ t('language') }}</span>
+            <select v-model="lang" @change="saveLang">
               <option value="en">English</option>
               <option value="fr">Français</option>
             </select>
@@ -175,226 +186,364 @@
         </div>
 
         <div class="row">
-          <div id="statusPill" class="status-pill">
-            <span id="statusDot" class="dot"></span>
-            <span id="statusText">Checking connection…</span>
+          <div class="status-pill">
+            <span class="dot" :class="statusKind"></span>
+            <span>{{ statusText }}</span>
           </div>
 
-          <button id="authBtn">Authenticate</button>
-          <button id="reloadBtn" class="secondary">Refresh</button>
+          <button :disabled="busy" @click="startFlow">{{ t('authenticate') }}</button>
+          <button class="secondary" :disabled="busy" @click="refreshConnection">{{ t('refresh') }}</button>
         </div>
 
-        <div id="hint" class="hint"></div>
+        <div class="hint">{{ t('hint') }}</div>
 
-        <div id="errorBox" class="error-box"></div>
+        <div v-if="errorMsg" class="error-box">{{ errorMsg }}</div>
 
-        <div id="iframeWrap" class="iframe-wrap">
-          <iframe id="novncFrame" title="noVNC"></iframe>
+        <div class="iframe-wrap" :class="{ show: iframeVisible }">
+          <iframe :src="iframeUrl" title="noVNC"></iframe>
+        </div>
+      </div>
+
+      <!-- Devices: visible only when authenticated -->
+      <div class="card devices-card" v-if="connected">
+        <div class="section-title">{{ t('devices') }}</div>
+
+        <div class="row" style="margin-top:0;">
+          <button class="secondary" :disabled="busyDevices" @click="loadDevices">{{ t('reloadDevices') }}</button>
+        </div>
+
+        <div class="list hint" v-if="devicesLoading">{{ t('loading') }}</div>
+
+        <div class="list" v-else>
+          <div v-if="devices.length === 0" class="hint">{{ t('noDevices') }}</div>
+
+          <div v-for="(d, idx) in devices" :key="idx" class="item">
+            <div class="item-title">{{ d.name || '(no name)' }}</div>
+            <div class="item-sub">
+              {{ (d.type || '') }} • {{ (d.id || '') }}
+            </div>
+          </div>
+        </div>
+
+        <div class="split">
+          <div class="section-title">{{ t('addCustomDevice') }}</div>
+
+          <div class="row">
+            <input v-model="form.name" :placeholder="t('name')" style="flex:1; min-width:220px;" />
+            <input v-model="form.model" :placeholder="t('model')" style="flex:1; min-width:180px;" />
+          </div>
+
+          <div class="row">
+            <input v-model="form.manufacturer" :placeholder="t('manufacturer')" style="flex:1; min-width:220px;" />
+            <input v-model="form.image_url" :placeholder="t('imageUrl')" style="flex:1; min-width:220px;" />
+          </div>
+
+          <div class="row">
+            <button :disabled="busyAdd" @click="addCustom">{{ busyAdd ? t('adding') : t('add') }}</button>
+            <div class="hint" v-if="addMsg">{{ addMsg }}</div>
+          </div>
         </div>
       </div>
     </div>
 
+    <!-- Vue 3 (inline) -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
     <script>
-      const authBtn = document.getElementById("authBtn");
-      const reloadBtn = document.getElementById("reloadBtn");
-      const statusDot = document.getElementById("statusDot");
-      const statusText = document.getElementById("statusText");
-      const iframeWrap = document.getElementById("iframeWrap");
-      const novncFrame = document.getElementById("novncFrame");
-      const errorBox = document.getElementById("errorBox");
-      const titleEl = document.getElementById("title");
-      const hintEl = document.getElementById("hint");
-      const langSelect = document.getElementById("langSelect");
-      const langLabel = document.getElementById("langLabel");
-
-      let pollingTimer = null;
-      let authStarted = false;
-
-      let I18N = null;
-      let LANG = "en";
+      const { createApp } = Vue;
 
       function detectLang() {
         const saved = localStorage.getItem("gfm_lang");
-        if (saved && (saved === "en" || saved === "fr")) return saved;
+        if (saved === "en" || saved === "fr") return saved;
         const nav = (navigator.language || "").toLowerCase();
         return nav.startsWith("fr") ? "fr" : "en";
       }
 
-      function t(key) {
-        if (!I18N) return key;
-        return (I18N[LANG] && I18N[LANG][key]) || (I18N["en"] && I18N["en"][key]) || key;
-      }
+      createApp({
+        data() {
+          return {
+            i18n: null,
+            lang: detectLang(),
 
-      function applyI18n() {
-        document.title = `${t("title")} - UI`;
-        titleEl.textContent = t("title");
-        authBtn.textContent = t("authenticate");
-        reloadBtn.textContent = t("refresh");
-        hintEl.textContent = t("hint");
-        langLabel.textContent = t("language");
-      }
+            statusKind: "",         // good|warn|bad
+            statusText: "…",
+            errorMsg: "",
 
-      function setStatus(kind, text) {
-        statusDot.className = "dot";
-        if (kind === "good") statusDot.classList.add("good");
-        if (kind === "warn") statusDot.classList.add("warn");
-        if (kind === "bad") statusDot.classList.add("bad");
-        statusText.textContent = text;
-      }
+            connected: false,
 
-      function showError(msg) {
-        if (!msg) {
-          errorBox.style.display = "none";
-          errorBox.textContent = "";
-          return;
-        }
-        errorBox.style.display = "block";
-        errorBox.textContent = msg;
-      }
+            busy: false,
+            iframeVisible: false,
+            iframeUrl: "about:blank",
+            authStarted: false,
+            pollingTimer: null,
 
-      async function apiGet(url) {
-        const r = await fetch(url, { method: "GET" });
-        const t0 = await r.text();
-        let j = null;
-        try { j = JSON.parse(t0); } catch (e) { throw new Error(`Non-JSON response from ${url}: ${t0}`); }
-        if (!r.ok) throw new Error(j.error || `HTTP ${r.status} from ${url}`);
-        return j;
-      }
+            // anti-loop for auto reauth
+            autoReauthCooldownUntil: 0,
 
-      async function apiPost(url) {
-        const r = await fetch(url, { method: "POST" });
-        const t0 = await r.text();
-        let j = null;
-        try { j = JSON.parse(t0); } catch (e) { throw new Error(`Non-JSON response from ${url}: ${t0}`); }
-        if (!r.ok) throw new Error(j.error || `HTTP ${r.status} from ${url}`);
-        return j;
-      }
+            // devices
+            devices: [],
+            devicesLoading: false,
+            busyDevices: false,
 
-      async function refreshConnection() {
-        try {
-          showError(null);
-          setStatus("warn", t("checking"));
-          const s = await apiGet("/api/connection/status");
-          if (s.connected) setStatus("good", t("connected"));
-          else setStatus("bad", t("disconnected"));
-        } catch (e) {
-          setStatus("bad", t("serverError"));
-          showError(String(e));
-        }
-      }
+            // add custom
+            form: {
+              name: "",
+              model: "Custom Tracker",
+              manufacturer: "GoogleFindMyTools",
+              image_url: ""
+            },
+            busyAdd: false,
+            addMsg: ""
+          };
+        },
 
-      function stopPolling() {
-        if (pollingTimer) {
-          clearInterval(pollingTimer);
-          pollingTimer = null;
-        }
-      }
+        methods: {
+          t(key) {
+            const I = this.i18n || {};
+            return (I[this.lang] && I[this.lang][key]) || (I.en && I.en[key]) || key;
+          },
 
-      async function pollAuthStatus() {
-        try {
-          const st = await apiGet("/api/auth/status");
+          saveLang() {
+            localStorage.setItem("gfm_lang", this.lang);
+            document.title = `${this.t("title")} - UI`;
+            this.refreshConnection();
+          },
 
-          if (st.running) {
-            setStatus("warn", t("authenticating"));
-            return;
-          }
+          setStatus(kind, text) {
+            this.statusKind = kind;
+            this.statusText = text;
+          },
 
-          if (st.done) {
-            if (st.result && st.result.success) {
-              setStatus("good", t("connected"));
-              showError(null);
-              // Close iframe on success
-              iframeWrap.style.display = "none";
-              novncFrame.src = "about:blank";
-            } else {
-              setStatus("bad", t("authFailed"));
-              const errMsg = (st.result && st.result.error) ? st.result.error : "Unknown error";
-              showError(errMsg);
-              // keep iframe visible on failure (so you can see what happened)
+          async apiFetch(url, opts) {
+            const r = await fetch(url, opts || {});
+            const text = await r.text();
+            let j = null;
+            try { j = text ? JSON.parse(text) : null; } catch { j = { error: text }; }
+            return { ok: r.ok, status: r.status, json: j };
+          },
+
+          async apiGet(url) {
+            const res = await this.apiFetch(url, { method: "GET" });
+            if (!res.ok) throw res;
+            return res.json;
+          },
+
+          async apiPost(url, bodyObj) {
+            const opts = { method: "POST", headers: {} };
+            if (bodyObj !== undefined) {
+              opts.headers["Content-Type"] = "application/json";
+              opts.body = JSON.stringify(bodyObj);
             }
+            const res = await this.apiFetch(url, opts);
+            if (!res.ok) throw res;
+            return res.json;
+          },
 
-            authStarted = false;
-            stopPolling();
-            setTimeout(refreshConnection, 700);
-          }
-        } catch (e) {
-          setStatus("bad", t("serverError"));
-          showError(String(e));
-        }
-      }
+          formatApiError(res) {
+            // res is {status, json}
+            const j = res && res.json ? res.json : {};
+            if (j && (j.message || j.error)) {
+              return j.message || j.error;
+            }
+            return `HTTP ${res.status || "?"}`;
+          },
 
-      function startPolling() {
-        stopPolling();
-        pollingTimer = setInterval(pollAuthStatus, 800);
-      }
+          shouldAutoReauth() {
+            const now = Date.now();
+            return now >= this.autoReauthCooldownUntil;
+          },
 
-      async function startFlow() {
-        authBtn.disabled = true;
-        reloadBtn.disabled = true;
-        showError(null);
+          armAutoReauthCooldown(ms) {
+            this.autoReauthCooldownUntil = Date.now() + ms;
+          },
 
-        try {
-          setStatus("warn", t("startingVnc"));
+          async triggerReauth(reasonText) {
+            // avoid infinite loop spam
+            if (!this.shouldAutoReauth()) return;
 
-          const nv = await apiPost("/api/novnc/start");
-          if (!nv.iframe_url) throw new Error("noVNC start returned no iframe_url");
+            this.connected = false;
+            this.devices = [];
+            this.addMsg = "";
+            this.errorMsg = reasonText || this.t("authFailed");
 
-          iframeWrap.style.display = "block";
-          novncFrame.src = nv.iframe_url;
+            // cooldown 8s so device polling doesn't spam auth
+            this.armAutoReauthCooldown(8000);
 
-          // Wait for iframe load once, then start auth
-          novncFrame.onload = async () => {
-            if (authStarted) return;
-            authStarted = true;
-            novncFrame.onload = null;
+            // auto open iframe + start auth flow
+            await this.startFlow();
+          },
+
+          async refreshConnection() {
+            try {
+              this.errorMsg = "";
+              this.setStatus("warn", this.t("checking"));
+
+              const s = await this.apiGet("/api/connection/status");
+              this.connected = !!s.connected;
+
+              if (this.connected) {
+                this.setStatus("good", this.t("connected"));
+                // optional: lazy load
+                await this.loadDevices();
+              } else {
+                this.setStatus("bad", this.t("disconnected"));
+                this.devices = [];
+              }
+            } catch (e) {
+              this.setStatus("bad", this.t("serverError"));
+              this.errorMsg = this.formatApiError(e);
+            }
+          },
+
+          stopPolling() {
+            if (this.pollingTimer) {
+              clearInterval(this.pollingTimer);
+              this.pollingTimer = null;
+            }
+          },
+
+          async pollAuthStatus() {
+            try {
+              const st = await this.apiGet("/api/auth/status");
+
+              if (st.running) {
+                this.setStatus("warn", this.t("authenticating"));
+                return;
+              }
+
+              if (st.done) {
+                if (st.result && st.result.success) {
+                  this.connected = true;
+                  this.setStatus("good", this.t("connected"));
+                  this.errorMsg = "";
+
+                  // Close iframe on success
+                  this.iframeVisible = false;
+                  this.iframeUrl = "about:blank";
+
+                  await this.loadDevices();
+                } else {
+                  this.connected = false;
+                  this.setStatus("bad", this.t("authFailed"));
+                  const errMsg = (st.result && st.result.error) ? st.result.error : "Unknown error";
+                  this.errorMsg = errMsg;
+                  // keep iframe visible on failure
+                }
+
+                this.authStarted = false;
+                this.stopPolling();
+                setTimeout(() => this.refreshConnection(), 700);
+              }
+            } catch (e) {
+              this.setStatus("bad", this.t("serverError"));
+              this.errorMsg = this.formatApiError(e);
+            }
+          },
+
+          startPolling() {
+            this.stopPolling();
+            this.pollingTimer = setInterval(() => this.pollAuthStatus(), 800);
+          },
+
+          async startFlow() {
+            // guard: if already running auth flow, don't restart
+            if (this.authStarted) return;
+
+            this.busy = true;
+            this.errorMsg = "";
 
             try {
-              setStatus("warn", t("authenticating"));
-              await apiPost("/api/auth/start");
-              startPolling();
+              this.setStatus("warn", this.t("startingVnc"));
+              const nv = await this.apiPost("/api/novnc/start");
+              if (!nv.iframe_url) throw { status: 500, json: { error: "noVNC start returned no iframe_url" } };
+
+              this.iframeVisible = true;
+              this.iframeUrl = nv.iframe_url;
+
+              // start auth
+              this.authStarted = true;
+              this.setStatus("warn", this.t("authenticating"));
+              await this.apiPost("/api/auth/start");
+              this.startPolling();
             } catch (e) {
-              setStatus("bad", t("authFailed"));
-              showError(String(e));
-              authStarted = false;
+              this.setStatus("bad", this.t("failedToStart"));
+              this.errorMsg = this.formatApiError(e);
+              this.iframeVisible = false;
+              this.iframeUrl = "about:blank";
+              this.authStarted = false;
+            } finally {
+              this.busy = false;
             }
-          };
-        } catch (e) {
-          setStatus("bad", t("failedToStart"));
-          showError(String(e));
-          iframeWrap.style.display = "none";
-          novncFrame.src = "about:blank";
-          authStarted = false;
-        } finally {
-          authBtn.disabled = false;
-          reloadBtn.disabled = false;
+          },
+
+          async loadDevices() {
+            if (!this.connected) return;
+
+            this.devicesLoading = true;
+            this.busyDevices = true;
+
+            try {
+              const r = await this.apiGet("/api/devices");
+              this.devices = Array.isArray(r.devices) ? r.devices : [];
+            } catch (e) {
+              const j = (e && e.json) ? e.json : {};
+              // formatted reauth from backend
+              if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
+                await this.triggerReauth(`${this.t("authFailed")}\n${j.details || ""}`);
+                return;
+              }
+              this.errorMsg = `${this.t("devicesLoadFailed")}\n${this.formatApiError(e)}`;
+            } finally {
+              this.devicesLoading = false;
+              this.busyDevices = false;
+            }
+          },
+
+          async addCustom() {
+            this.addMsg = "";
+            if (!this.form.name || !this.form.name.trim()) {
+              this.addMsg = this.t("nameRequired");
+              return;
+            }
+
+            this.busyAdd = true;
+            try {
+              await this.apiPost("/api/devices/custom", {
+                name: this.form.name.trim(),
+                model: (this.form.model || "").trim(),
+                manufacturer: (this.form.manufacturer || "").trim(),
+                image_url: (this.form.image_url || "").trim()
+              });
+
+              this.addMsg = this.t("addedOk");
+              await this.loadDevices();
+            } catch (e) {
+              const j = (e && e.json) ? e.json : {};
+              if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
+                await this.triggerReauth(`${this.t("authFailed")}\n${j.details || ""}`);
+                return;
+              }
+              this.addMsg = `${this.t("addFailed")} ${this.formatApiError(e)}`;
+            } finally {
+              this.busyAdd = false;
+            }
+          }
+        },
+
+        async mounted() {
+          // load external JSON (must be external)
+          try {
+            const r = await fetch("/static/i18n.json", { cache: "no-store" });
+            this.i18n = await r.json();
+          } catch {
+            this.i18n = { en: { title: "Google Find My Tools" }, fr: { title: "Google Find My Tools" } };
+          }
+
+          document.title = `${this.t("title")} - UI`;
+          this.setStatus("warn", this.t("checking"));
+          await this.refreshConnection();
         }
-      }
-
-      langSelect.addEventListener("change", () => {
-        LANG = langSelect.value;
-        localStorage.setItem("gfm_lang", LANG);
-        applyI18n();
-        refreshConnection();
-      });
-
-      authBtn.addEventListener("click", startFlow);
-      reloadBtn.addEventListener("click", refreshConnection);
-
-      // Boot
-      (async () => {
-        LANG = detectLang();
-        langSelect.value = LANG;
-
-        try {
-          const r = await fetch("/static/i18n.json");
-          I18N = await r.json();
-        } catch (e) {
-          I18N = null;
-        }
-
-        applyI18n();
-        refreshConnection();
-      })();
+      }).mount("#app");
     </script>
   </body>
 </html>

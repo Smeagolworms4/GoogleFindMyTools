@@ -9,6 +9,14 @@ export PATH="/opt/venv/bin:$PATH"
 # Ensure data folder exists
 mkdir -p /data/Auth
 
+
+# Copy the py code
+cp -rf /app/Auth/* /data/Auth/ || true
+cp -rf /app/Auth/.* /data/Auth/ 2>/dev/null || true
+
+mv /app/Auth /app/Auth-old
+ln -sfn /data/Auth /app/Auth
+
 echo "Python version:"
 python --version
 
