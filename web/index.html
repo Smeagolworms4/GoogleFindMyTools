@@ -1,3 +1,4 @@
+<!-- web/index.html -->
 <!doctype html>
 <html lang="en">
   <head>
@@ -141,7 +142,11 @@
         padding: 8px 10px;
         outline: none;
       }
-
+      select option {
+        background-color: #222;
+        color: #fff;
+      }
+      
       .devices-card { margin-top: 16px; }
 
       .section-title {
@@ -247,6 +252,53 @@
             <code class="key">{{ advKey }}</code>
           </div>
         </div>
+
+        <!-- Secrets -->
+        <div class="split">
+          <div class="section-title">{{ t('secrets') }}</div>
+
+          <div class="row" style="margin-top:0;">
+            <button class="secondary" :disabled="busySecrets" @click="loadSecrets">
+              {{ busySecrets ? t('loading') : t('showSecrets') }}
+            </button>
+            <button class="secondary" :disabled="!secretsText" @click="copyText(secretsText)">
+              {{ t('copy') }}
+            </button>
+          </div>
+
+          <div v-if="secretsText" class="hint" style="margin-top:10px;">
+            <pre class="error-box" style="max-height:280px; overflow:auto;">{{ secretsText }}</pre>
+          </div>
+        </div>
+
+        <!-- Locate -->
+        <div class="split">
+          <div class="section-title">{{ t('locate') }}</div>
+
+          <div class="row" style="margin-top:0;">
+            <select v-model="selectedDeviceId" style="min-width:320px;">
+              <option disabled value="">{{ t('selectDevice') }}</option>
+              <option v-for="(d, idx) in devices" :key="idx" :value="d.id">
+                {{ (d.name || '(no name)') + ' — ' + (d.id || '') }}
+              </option>
+            </select>
+
+            <button class="secondary" :disabled="busyLocate || !selectedDeviceId" @click="locateSelected">
+              {{ busyLocate ? t('locating') : t('locateBtn') }}
+            </button>
+
+            <button class="secondary" :disabled="!locateResult" @click="copyText(locateResult)">
+              {{ t('copy') }}
+            </button>
+          </div>
+
+          <div v-if="locateMsg" class="hint" style="margin-top:8px;">{{ locateMsg }}</div>
+
+          <div v-if="locateResult" class="hint" style="margin-top:10px;">
+            <pre class="error-box" style="max-height:260px; overflow:auto;">{{ locateResult }}</pre>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -288,14 +340,29 @@
 
             busyAdd: false,
             addMsg: "",
-            advKey: ""
+            advKey: "",
+
+            // secrets
+            busySecrets: false,
+            secretsText: "",
+
+            // locate
+            selectedDeviceId: "",
+            busyLocate: false,
+            locateMsg: "",
+            locateResult: ""
           };
         },
 
         methods: {
           t(key) {
             const I = this.i18n || {};
-            return (I[this.lang] && I[this.lang][key]) || (I.en && I.en[key]) || key;
+            const result = (I[this.lang] && I[this.lang][key]) || (I.en && I.en[key]) || null;
+            if (result === null) {
+              console.warn('Transaltion not found "'+key+'"');
+              return key;
+            }
+            return result;
           },
 
           saveLang() {
@@ -355,6 +422,10 @@
             this.devices = [];
             this.addMsg = "";
             this.advKey = "";
+            this.secretsText = "";
+            this.selectedDeviceId = "";
+            this.locateMsg = "";
+            this.locateResult = "";
             this.errorMsg = reasonText || this.t("authFailed");
 
             this.armAutoReauthCooldown(8000);
@@ -468,6 +539,10 @@
             try {
               const r = await this.apiGet("/api/devices");
               this.devices = Array.isArray(r.devices) ? r.devices : [];
+
+              if (this.selectedDeviceId && !this.devices.find(d => d.id === this.selectedDeviceId)) {
+                this.selectedDeviceId = "";
+              }
             } catch (e) {
               const j = (e && e.json) ? e.json : {};
               if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
@@ -501,6 +576,56 @@
             } finally {
               this.busyAdd = false;
             }
+          },
+
+          async loadSecrets() {
+            this.busySecrets = true;
+            this.secretsText = "";
+            try {
+              const r = await this.apiGet("/api/secrets");
+              this.secretsText = (r && r.secrets_text) ? r.secrets_text : "";
+              if (!this.secretsText) this.secretsText = "(empty)";
+            } catch (e) {
+              this.secretsText = "";
+              this.errorMsg = `${this.t("secrets")} : ${this.formatApiError(e)}`;
+            } finally {
+              this.busySecrets = false;
+            }
+          },
+
+          async locateSelected() {
+            this.locateMsg = "";
+            this.locateResult = "";
+            this.busyLocate = true;
+
+            try {
+              const r = await this.apiPost("/api/devices/locate", { device_id: this.selectedDeviceId });
+              this.locateMsg = this.t("locateOk");
+              this.locateResult = JSON.stringify(r.location ?? r, null, 2);
+            } catch (e) {
+              const j = (e && e.json) ? e.json : {};
+              if (e.status === 401 && j.code === "REAUTH_REQUIRED") {
+                await this.triggerReauth(`${this.t("authFailed")}\n${j.details || ""}`);
+                return;
+              }
+              this.locateMsg = `${this.t("locateFailed")} ${this.formatApiError(e)}`;
+            } finally {
+              this.busyLocate = false;
+            }
+          },
+
+          async copyText(txt) {
+            const s = txt || "";
+            try {
+              await navigator.clipboard.writeText(s);
+            } catch {
+              const ta = document.createElement("textarea");
+              ta.value = s;
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand("copy");
+              ta.remove();
+            }
           }
         },
 
@@ -508,7 +633,8 @@
           try {
             const r = await fetch("/static/i18n.json", { cache: "no-store" });
             this.i18n = await r.json();
-          } catch {
+          } catch(e) {
+            console.error(e);
             this.i18n = { en: { title: "Google Find My Tools" }, fr: { title: "Google Find My Tools" } };
           }
 

@@ -1,3 +1,4 @@
+# server_web.py
 import os
 import sys
 import io
@@ -315,8 +316,7 @@ def _wait_for_secrets(timeout_s: int) -> bool:
 
 def _kick_chrome_into_view():
     """
-    Important : on garde ton comportement historique,
-    juste un helper pour ramener la fenêtre Chrome en plein écran dans VNC.
+    Helper pour ramener Chrome en plein écran dans VNC.
     """
     cmd = f"""
 set -e
@@ -352,10 +352,9 @@ exit 0
 
 def _auth_only_job():
     """
-    Objectif :
-    - faire l’auth “base” (aas + adm) + l’auth “advanced” (spot + owner key check)
-    - NE PAS marquer success tant que l’advanced n’est pas OK
-    - rester dans la même session iframe
+    FULL AUTH:
+    - aas + adm
+    - spot token + owner key check
     """
     global auth_state, auth_started_ts
 
@@ -374,7 +373,6 @@ def _auth_only_job():
         from Auth.adm_token_retrieval import get_adm_token
         from Auth.username_provider import get_username
 
-        # auto "Enter" (avoid blocking) => OUI on force enter, comme tu veux
         orig_input = builtins.input
         builtins.input = lambda *args, **kwargs: ""
 
@@ -388,24 +386,20 @@ def _auth_only_job():
             _log("[auth] get_adm_token(username)...")
             _ = get_adm_token(username)
 
-            # ------- ADVANCED : spot token + owner key -------
             _log("[auth] get_spot_token(username) (ADVANCED)...")
             from Auth.spot_token_retrieval import get_spot_token
             _ = get_spot_token(username)
             _kick_chrome_into_view()
 
-            # Le vrai test “ça marchera pour add/locate” :
-            # register_esp32() dépend de get_owner_key()
             _log("[auth] get_owner_key() (ADVANCED CHECK)...")
             from SpotApi.GetEidInfoForE2eeDevices.get_owner_key import get_owner_key
-            _ = get_owner_key()  # ne loggue pas la clé, juste check
+            _ = get_owner_key()
+
             advanced_ok = True
             _log("[auth] advanced auth OK (spot + owner key)")
-
         finally:
             builtins.input = orig_input
 
-        # success uniquement si secrets existent + advanced_ok
         if not _wait_for_secrets(AUTH_WAIT_SECONDS):
             err = f"Timeout: secrets.json not created after {AUTH_WAIT_SECONDS}s"
             _log("[auth] " + err)
@@ -455,11 +449,6 @@ def _require_auth():
 # =========================================================
 
 def _normalize_devices(devices_any):
-    """
-    Always returns a LIST of:
-      { id, name, type, raw }
-    Handles tuples, dicts, string-tuples etc.
-    """
     out = []
     if devices_any is None:
         return out
@@ -523,7 +512,7 @@ _AUTH_ABORT_PATTERNS = [
     ("press enter to continue", "PRESS_ENTER"),
     ("this script will now open google chrome", "OPEN_CHROME"),
     ("phone_registration_error", "PHONE_REGISTRATION_ERROR"),
-    ("gcm register request attempt", "GCM_REGISTER_FAILED"),  # + "has failed"
+    ("gcm register request attempt", "GCM_REGISTER_FAILED"),
 ]
 
 
@@ -546,10 +535,6 @@ def _detect_reauth_line(line: str) -> str | None:
 
 
 class _CaptureAndAbort(io.TextIOBase):
-    """
-    Capture stdout/stderr in worker and abort if repo goes interactive/auth required.
-    Also stores output so we can parse "Advertisement Key".
-    """
     def __init__(self, max_chars: int = 24000):
         super().__init__()
         self._max = max_chars
@@ -583,17 +568,14 @@ class _CaptureAndAbort(io.TextIOBase):
 
 
 def _worker_bootstrap(tools_dir_str: str):
-    """Common bootstrap for every worker."""
     if "/app" not in sys.path:
         sys.path.insert(0, "/app")
     if tools_dir_str and tools_dir_str not in sys.path:
         sys.path.insert(0, tools_dir_str)
 
-    # never allow input() to block
     orig_input = builtins.input
     builtins.input = lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt("INPUT_BLOCKED"))
 
-    # capture stdout/stderr to detect auth prompts
     cap = _CaptureAndAbort()
     orig_out, orig_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = cap, cap
@@ -618,10 +600,6 @@ def _job_list_devices():
 
 
 def _parse_advertisement_key(stdout_text: str) -> str | None:
-    """
-    register_esp32() prints a big ASCII box containing eid.hex().
-    We'll extract the longest hex string (24..128).
-    """
     if not stdout_text:
         return None
     cands = re.findall(r"\b[0-9a-fA-F]{24,128}\b", stdout_text)
@@ -632,21 +610,32 @@ def _parse_advertisement_key(stdout_text: str) -> str | None:
 
 
 def _job_create_custom_esp32():
-    """
-    Use repo's register_esp32() exactly.
-    It prints the Advertisement Key (EID hex) to stdout.
-    """
     from SpotApi.CreateBleDevice.create_ble_device import register_esp32
     return register_esp32()
 
 
+def _job_locate_device(device_id: str):
+    """
+    Locate (best-effort). Adapte l'import si besoin selon ton repo.
+    """
+    # tentative 1 (Nova)
+    try:
+        from NovaApi.LocateDevice.nbe_locate_device import locate_device
+        return locate_device(device_id)
+    except Exception:
+        pass
+
+    # tentative 2 (Spot)
+    try:
+        from SpotApi.GetDeviceLocation.get_device_location import get_device_location
+        return get_device_location(device_id)
+    except Exception:
+        pass
+
+    raise RuntimeError("No locate implementation found in repo. Wire the correct locate function import.")
+
+
 def _worker_entry(conn, job: str, tools_dir_str: str, payload: dict | None):
-    """
-    Returns via pipe:
-      ("ok", {"result":..., "stdout":...})
-      ("reauth", {"reason":..., "stdout":...})
-      ("err", {"error":..., "stdout":...})
-    """
     orig_input = orig_out = orig_err = cap = None
     try:
         orig_input, orig_out, orig_err, cap = _worker_bootstrap(tools_dir_str)
@@ -658,6 +647,15 @@ def _worker_entry(conn, job: str, tools_dir_str: str, payload: dict | None):
 
         if job == "create_custom_esp32":
             res = _job_create_custom_esp32()
+            conn.send(("ok", {"result": res, "stdout": cap.get_text()}))
+            return
+
+        if job == "locate_device":
+            dev_id = (payload or {}).get("device_id")
+            if not dev_id:
+                conn.send(("err", {"error": "device_id missing", "stdout": cap.get_text()}))
+                return
+            res = _job_locate_device(str(dev_id))
             conn.send(("ok", {"result": res, "stdout": cap.get_text()}))
             return
 
@@ -783,6 +781,25 @@ def auth_status():
     }
 
 
+# ===== secrets.json endpoint (DANGEROUS) =====
+@app.get("/api/secrets")
+def api_secrets():
+    deny = _require_auth()
+    if deny:
+        return deny
+
+    try:
+        txt = SECRETS_FILE.read_text(encoding="utf-8")
+        parsed = None
+        try:
+            parsed = json.loads(txt)
+        except Exception:
+            parsed = None
+        return {"ok": True, "secrets_text": txt, "secrets_json": parsed}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 # =========================================================
 # noVNC HTTP proxy
 # =========================================================
@@ -893,4 +910,32 @@ def api_devices_custom_create():
 
     err = (payload or {}).get("error", "Unknown error")
     _log("[devices/custom] EXCEPTION:\n" + str(err))
+    return JSONResponse({"ok": False, "error": err}, status_code=500)
+
+
+@app.post("/api/devices/locate")
+def api_devices_locate(body: dict):
+    """
+    Locate a device by id. Returns raw JSON from repo.
+    """
+    deny = _require_auth()
+    if deny:
+        return deny
+
+    device_id = (body or {}).get("device_id")
+    if not device_id:
+        return JSONResponse({"ok": False, "error": "device_id required"}, status_code=400)
+
+    kind, payload = _run_isolated("locate_device", payload={"device_id": str(device_id)}, timeout_s=25)
+
+    if kind == "ok":
+        return {"ok": True, "location": (payload or {}).get("result")}
+
+    if kind == "reauth":
+        reason = (payload or {}).get("reason", "REAUTH")
+        _log(f"[devices/locate] reauth detected: {reason}")
+        return _reauth_response(reason, status_code=401)
+
+    err = (payload or {}).get("error", "Unknown error")
+    _log("[devices/locate] EXCEPTION:\n" + str(err))
     return JSONResponse({"ok": False, "error": err}, status_code=500)
