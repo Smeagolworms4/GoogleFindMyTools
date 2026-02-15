@@ -5,6 +5,26 @@ This repository includes some useful tools that reimplement parts of Google's Fi
 ### What's possible?
 Currently, it is possible to query Find My Device / Find Hub trackers and Android devices, read out their E2EE keys, and decrypt encrypted locations sent from the Find My Device / Find Hub network. You can also send register your own ESP32- or Zephyr-based trackers, as described below.
 
+
+### Docker Web integration
+
+This fork is a fully web-based integration of the Python script. It includes a no-VNC service for connecting with Google Chrome.
+
+![DEMO](https://raw.githubusercontent.com/Smeagolworms4/GoogleFindMyTools/master/demo.jpg)
+
+
+To launch the container:
+
+```bash
+docker run --rm -it -p 8000:8000 -v "$(pwd)/data":/data smeagolworms4/googlefindmytools:latest
+```
+
+After opening http://127.0.0.1:8000/
+
+Use in Home assistant Addon : https://github.com/GollumDom/addon-repository
+
+Docker hub: https://hub.docker.com/r/smeagolworms4/googlefindmytools
+
 ### How to use
 
 > [!CAUTION]
