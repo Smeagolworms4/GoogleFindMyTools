@@ -55,8 +55,7 @@ RUN mkdir -p /opt/uc-cache
 # -------------------------------------------------------
 ENV GFM_TOOLS_DIR=/app
 
-ENV GFM_SECRETS_PATH=/data/Auth/secrets.json
-ENV GFM_AUTH_DONE_MARKER=/data/Auth/.auth_done.json
+ENV GFM_DATA_PATH=/data
 ENV GFM_AUTH_WAIT_SECONDS=900
 
 ENV DISPLAY=:99

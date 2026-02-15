@@ -52,9 +52,10 @@ SCREEN_D = int(os.environ.get("GFM_SCREEN_D", "24"))
 TOOLS_DIR = Path(os.environ.get("GFM_TOOLS_DIR", "/app")).resolve()
 
 # persistent auth data lives here (mounted volume)
-DATA_AUTH_DIR = Path("/data/Auth")
-SECRETS_FILE = Path(os.environ.get("GFM_SECRETS_PATH", str(DATA_AUTH_DIR / "secrets.json")))
-AUTH_DONE_MARKER = Path(os.environ.get("GFM_AUTH_DONE_MARKER", str(DATA_AUTH_DIR / ".auth_done.json")))
+DATA_PATH = Path(os.environ.get("GFM_DATA_PATH", "/data"))
+DATA_AUTH_DIR = str(DATA_PATH / "/Auth")
+SECRETS_FILE = str(DATA_AUTH_DIR / "secrets.json")
+AUTH_DONE_MARKER = str(DATA_AUTH_DIR / ".auth_done.json")
 AUTH_WAIT_SECONDS = int(os.environ.get("GFM_AUTH_WAIT_SECONDS", "900"))
 
 # ---- Processes ----
