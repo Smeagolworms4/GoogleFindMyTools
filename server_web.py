@@ -52,10 +52,10 @@ SCREEN_D = int(os.environ.get("GFM_SCREEN_D", "24"))
 TOOLS_DIR = Path(os.environ.get("GFM_TOOLS_DIR", "/app")).resolve()
 
 # persistent auth data lives here (mounted volume)
-DATA_PATH = Path(os.environ.get("GFM_DATA_PATH", "/data"))
-DATA_AUTH_DIR = DATA_PATH / "Auth"
-SECRETS_FILE = str(DATA_AUTH_DIR / "secrets.json")
-AUTH_DONE_MARKER = str(DATA_AUTH_DIR / ".auth_done.json")
+DATA_PATH = Path(str(os.environ.get("GFM_DATA_PATH", "/data")))
+DATA_AUTH_DIR = Path(str(DATA_PATH / "Auth"))
+SECRETS_FILE = Path(str(DATA_AUTH_DIR / "secrets.json"))
+AUTH_DONE_MARKER = Path(str(DATA_AUTH_DIR / ".auth_done.json"))
 AUTH_WAIT_SECONDS = int(os.environ.get("GFM_AUTH_WAIT_SECONDS", "900"))
 
 # ---- Processes ----
@@ -191,7 +191,7 @@ def _schedule_cleanup_after_done_if_success(marker: dict | None):
 
 
 def _iframe_url():
-    return "/novnc/vnc.html?path=novnc/websockify&autoconnect=1&reconnect=1&resize=scale"
+    return "novnc/vnc.html?path=novnc/websockify&autoconnect=1&reconnect=1&resize=scale"
 
 
 def _ensure_runtime_env():
